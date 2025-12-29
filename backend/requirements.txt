@@ -1,0 +1,21 @@
+# Backend dependencies
+# For development, install from root: pip install -e ".[dev]"
+# This file is used for Docker builds
+
+# FastAPI and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+
+# Core
+numpy>=1.26.0,<2
+pillow>=10.0.0
+opencv-python>=4.8.0
+
+# ML
+torch>=2.7.0
+torchvision>=0.22.0
+
+# Data utilities
+pycocotools>=2.0.0
