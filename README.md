@@ -10,6 +10,10 @@ An annotation tool for image segmentation with SAM integration and automatic pro
 - YOLO-seg format export
 - Review workflow for propagated annotations
 
+## Demo
+
+https://github.com/user-attachments/assets/946ba046-a91b-4d39-ab81-d85eb0bfba0c
+
 ## Installation
 
 ### Prerequisites
