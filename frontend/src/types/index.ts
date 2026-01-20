@@ -112,6 +112,8 @@ export interface PropagateAdvancedResult {
   area_ratio: number;
   method: 'peak' | 'dense' | 'iou_match';
   iou_score: number | null;
+  duplicate_skipped?: boolean;
+  duplicate_iou?: number;
 }
 
 // Propagation mode for advanced propagation

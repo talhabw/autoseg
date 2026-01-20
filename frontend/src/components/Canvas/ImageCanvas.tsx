@@ -314,10 +314,7 @@ export function ImageCanvas() {
       setHoveredMaskIndex(maskIdx);
     }
     
-    if (!isDrawing || mode !== 'draw') return;
-
-    const pos = getImagePointer();
-    if (!pos) return;
+    if (!isDrawing || mode !== 'draw' || !pos) return;
 
     setDrawingBbox((prev) => prev ? { ...prev, x2: pos.x, y2: pos.y } : null);
   };

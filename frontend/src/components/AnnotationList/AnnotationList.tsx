@@ -26,7 +26,7 @@ export function AnnotationList() {
     createAnnotation,
   } = useAnnotationStore();
 
-  const { currentImageIndex, setCurrentImageIndex, images, currentImage } = useProjectStore();
+  const { currentImageIndex, setCurrentImageIndex, currentImage } = useProjectStore();
   const { reviewFilter, setReviewFilter, reviewModeEnabled, propagationLoaded, addToast } = useUIStore();
   const [isFindingInstances, setIsFindingInstances] = useState(false);
 
