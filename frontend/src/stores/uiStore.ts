@@ -34,8 +34,6 @@ interface UIState {
   propagationLoaded: boolean;
   isLoadingModel: boolean;
   isPropagating: boolean;  // Track if propagation is in progress
-  segmentEverythingEnabled: boolean; // Whether segment everything preview is active
-  cachedMaskCount: number; // Number of cached masks from segment everything
   
   // Modal states
   showCreateProjectModal: boolean;
@@ -70,8 +68,6 @@ interface UIState {
   setPropagationMode: (mode: PropagationMode) => void;
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
-  setSegmentEverythingEnabled: (enabled: boolean) => void;
-  setCachedMaskCount: (count: number) => void;
   
   // Status
   setStatusMessage: (message: string) => void;
@@ -104,8 +100,6 @@ export const useUIStore = create<UIState>()(
       propagationLoaded: false,
       isLoadingModel: false,
       isPropagating: false,
-      segmentEverythingEnabled: false,
-      cachedMaskCount: 0,
       showCreateProjectModal: false,
       showOpenProjectModal: false,
       showExportModal: false,
@@ -194,8 +188,6 @@ export const useUIStore = create<UIState>()(
       setPropagationMode: (mode) => set({ propagationMode: mode }),
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
-      setSegmentEverythingEnabled: (enabled) => set({ segmentEverythingEnabled: enabled }),
-      setCachedMaskCount: (count) => set({ cachedMaskCount: count }),
 
       setStatusMessage: (message) => set({ statusMessage: message }),
       setIsPropagating: (value) => set({ isPropagating: value }),

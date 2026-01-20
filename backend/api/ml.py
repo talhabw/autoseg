@@ -463,18 +463,7 @@ async def propagate(request: PropagateRequest):
         raise HTTPException(status_code=500, detail=f"Propagation failed: {e}")
 
 
-# ==================== New Features: Segment Everything, Find All Instances ====================
-
-
-class SegmentEverythingRequest(BaseModel):
-    image_id: int
-    min_mask_area: int = 100
-    nms_iou_threshold: float = 0.7
-
-
-class SegmentEverythingResponse(BaseModel):
-    masks: list[dict]  # List of {bbox, mask_rle, score, area}
-    count: int
+# ==================== New Features: Find All Instances ====================
 
 
 class FindAllInstancesRequest(BaseModel):
@@ -515,56 +504,6 @@ class PropagateAdvancedResponse(BaseModel):
     area_ratio: float
     method: str  # "peak", "dense", or "iou_match"
     iou_score: Optional[float]
-
-
-@router.post("/segment/everything", response_model=SegmentEverythingResponse)
-async def segment_everything(request: SegmentEverythingRequest):
-    """
-    Segment all objects in an image using SAM.
-
-    Returns all detected masks, which can be used for:
-    - Quick annotation by clicking on pre-computed masks
-    - Finding instances of a class via IoU matching
-    - Validating propagation results
-    """
-    segment_service = get_segment_service()
-
-    if not segment_service.is_loaded():
-        raise HTTPException(
-            status_code=400, detail="SAM not loaded. Call /api/ml/sam/load first"
-        )
-
-    # Load image
-    image_rgb, width, height = _load_image(request.image_id)
-
-    try:
-        # Run segment everything
-        cached_masks = segment_service.segment_everything(
-            image_rgb=image_rgb,
-            image_id=str(request.image_id),
-            min_mask_area=request.min_mask_area,
-            nms_iou_threshold=request.nms_iou_threshold,
-        )
-
-        # Convert to response format
-        masks = []
-        for cm in cached_masks:
-            rle = mask_to_rle(cm.mask)
-            masks.append(
-                {
-                    "bbox": cm.bbox,
-                    "mask_rle": rle,
-                    "score": cm.score,
-                    "area": cm.area,
-                }
-            )
-
-        return SegmentEverythingResponse(masks=masks, count=len(masks))
-
-    except Exception as e:
-        logger.error(f"Segment everything failed: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Segment everything failed: {e}")
 
 
 @router.post("/find-instances", response_model=FindAllInstancesResponse)

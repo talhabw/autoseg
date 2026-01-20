@@ -72,20 +72,6 @@ export interface DrawingBbox {
 
 // ==================== Advanced ML Types ====================
 
-// Cached mask from segment everything
-export interface CachedMaskResult {
-  bbox: [number, number, number, number];
-  mask_rle: object;
-  score: number;
-  area: number;
-}
-
-// Response from segment everything endpoint
-export interface SegmentEverythingResult {
-  masks: CachedMaskResult[];
-  count: number;
-}
-
 // Instance found by find-all-instances
 export interface FoundInstance {
   bbox: [number, number, number, number];

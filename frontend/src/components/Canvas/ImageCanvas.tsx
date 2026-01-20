@@ -4,9 +4,9 @@ import Konva from 'konva';
 import { useProjectStore } from '../../stores/projectStore';
 import { useAnnotationStore } from '../../stores/annotationStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getImageUrl, segmentEverything } from '../../api/client';
+import { getImageUrl } from '../../api/client';
 import { maskToCanvas, type RLEMask } from '../../utils/rle';
-import type { Annotation, DrawingBbox, CachedMaskResult } from '../../types';
+import type { Annotation, DrawingBbox } from '../../types';
 
 export function ImageCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -25,12 +25,6 @@ export function ImageCanvas() {
   // Cache for decoded mask canvases
   const [maskCanvases, setMaskCanvases] = useState<Map<number, HTMLCanvasElement>>(new Map());
 
-  // Segment everything preview state
-  const [segmentEverythingMasks, setSegmentEverythingMasks] = useState<CachedMaskResult[]>([]);
-  const [segmentEverythingCanvases, setSegmentEverythingCanvases] = useState<HTMLCanvasElement[]>([]);
-  const [hoveredMaskIndex, setHoveredMaskIndex] = useState<number | null>(null);
-  const [isLoadingSegmentEverything, setIsLoadingSegmentEverything] = useState(false);
-
   const { images, currentImageIndex } = useProjectStore();
   const {
     annotations,
@@ -43,7 +37,7 @@ export function ImageCanvas() {
     refinePoints,
     addRefinePoint,
   } = useAnnotationStore();
-  const { mode, maskOpacity, segmentEverythingEnabled, setCachedMaskCount, addToast, samLoaded } = useUIStore();
+  const { mode, maskOpacity } = useUIStore();
 
   const currentImage = images[currentImageIndex];
 
@@ -72,56 +66,6 @@ export function ImageCanvas() {
 
     setMaskCanvases(newCanvases);
   }, [annotations, maskOpacity, getLabelColor]);
-
-  // Load segment everything results when enabled
-  useEffect(() => {
-    if (!segmentEverythingEnabled || !currentImage || !samLoaded) {
-      setSegmentEverythingMasks([]);
-      setSegmentEverythingCanvases([]);
-      setCachedMaskCount(0);
-      return;
-    }
-
-    const loadSegmentEverything = async () => {
-      setIsLoadingSegmentEverything(true);
-      try {
-        const result = await segmentEverything(currentImage.id, {
-          minMaskArea: 100,
-          nmsIouThreshold: 0.7,
-        });
-        
-        setSegmentEverythingMasks(result.masks);
-        setCachedMaskCount(result.count);
-
-        // Decode masks to canvases with preview color
-        const canvases: HTMLCanvasElement[] = [];
-        for (const mask of result.masks) {
-          try {
-            const rle = mask.mask_rle as RLEMask;
-            const canvas = maskToCanvas(rle, '#8b5cf6', 0.3); // Purple preview color
-            canvases.push(canvas);
-          } catch (err) {
-            console.error('Failed to decode segment everything mask', err);
-          }
-        }
-        setSegmentEverythingCanvases(canvases);
-      } catch (err) {
-        console.error('Segment everything failed:', err);
-        addToast('Failed to auto-detect objects', 'error');
-      } finally {
-        setIsLoadingSegmentEverything(false);
-      }
-    };
-
-    loadSegmentEverything();
-  }, [segmentEverythingEnabled, currentImage?.id, samLoaded, setCachedMaskCount, addToast]);
-
-  // Clear segment everything when image changes
-  useEffect(() => {
-    setSegmentEverythingMasks([]);
-    setSegmentEverythingCanvases([]);
-    setHoveredMaskIndex(null);
-  }, [currentImage?.id]);
 
   // Get project for cache busting
   const project = useProjectStore((s) => s.project);
@@ -248,15 +192,6 @@ export function ImageCanvas() {
     const pos = getImagePointer();
     if (!pos || !currentImage) return;
 
-    // Handle segment everything preview clicks
-    if (segmentEverythingEnabled && segmentEverythingMasks.length > 0) {
-      const maskIdx = getMaskIndexAtPoint(pos.x, pos.y);
-      if (maskIdx !== null) {
-        handleSegmentEverythingMaskClick(maskIdx);
-        return;
-      }
-    }
-
     // In refine mode, allow clicking on the selected annotation's bbox
     if (mode === 'refine' && selectedAnnotationId) {
       // Get the selected annotation's bbox
@@ -307,12 +242,6 @@ export function ImageCanvas() {
   // Mouse move
   const handleMouseMove = () => {
     const pos = getImagePointer();
-    
-    // Update segment everything hover state
-    if (segmentEverythingEnabled && segmentEverythingMasks.length > 0 && pos) {
-      const maskIdx = getMaskIndexAtPoint(pos.x, pos.y);
-      setHoveredMaskIndex(maskIdx);
-    }
     
     if (!isDrawing || mode !== 'draw' || !pos) return;
 
@@ -393,44 +322,6 @@ export function ImageCanvas() {
     e.evt.preventDefault();
   };
 
-  // Handle clicking on a segment everything mask to create annotation
-  const handleSegmentEverythingMaskClick = async (maskIndex: number) => {
-    if (!currentImage || !selectedLabelId) {
-      addToast('Select a label first', 'warning');
-      return;
-    }
-
-    const mask = segmentEverythingMasks[maskIndex];
-    if (!mask) return;
-
-    try {
-      await createAnnotation({
-        image_id: currentImage.id,
-        label_id: selectedLabelId,
-        bbox: mask.bbox,
-        mask_rle: mask.mask_rle,
-        source: 'manual',
-        status: 'approved',
-      });
-      addToast('Annotation created', 'success', 1500);
-    } catch (err) {
-      console.error('Failed to create annotation from mask:', err);
-      addToast('Failed to create annotation', 'error');
-    }
-  };
-
-  // Check if a point is inside a mask (simple bbox check for hover)
-  const getMaskIndexAtPoint = (x: number, y: number): number | null => {
-    for (let i = segmentEverythingMasks.length - 1; i >= 0; i--) {
-      const mask = segmentEverythingMasks[i];
-      const [bx1, by1, bx2, by2] = mask.bbox;
-      if (x >= bx1 && x <= bx2 && y >= by1 && y <= by2) {
-        return i;
-      }
-    }
-    return null;
-  };
-
   if (!currentImage) {
     return (
       <div
@@ -501,49 +392,6 @@ export function ImageCanvas() {
               );
             })}
         </Layer>
-
-        {/* Segment Everything preview layer */}
-        {segmentEverythingEnabled && segmentEverythingCanvases.length > 0 && (
-          <Layer>
-            {segmentEverythingCanvases.map((canvas, idx) => {
-              const isHovered = hoveredMaskIndex === idx;
-              return (
-                <KonvaImage
-                  key={`seg-everything-${idx}`}
-                  image={canvas}
-                  x={0}
-                  y={0}
-                  opacity={isHovered ? 0.7 : 0.3}
-                  listening={false}
-                />
-              );
-            })}
-            {/* Hover highlight bbox */}
-            {hoveredMaskIndex !== null && segmentEverythingMasks[hoveredMaskIndex] && (
-              <Rect
-                x={segmentEverythingMasks[hoveredMaskIndex].bbox[0]}
-                y={segmentEverythingMasks[hoveredMaskIndex].bbox[1]}
-                width={segmentEverythingMasks[hoveredMaskIndex].bbox[2] - segmentEverythingMasks[hoveredMaskIndex].bbox[0]}
-                height={segmentEverythingMasks[hoveredMaskIndex].bbox[3] - segmentEverythingMasks[hoveredMaskIndex].bbox[1]}
-                stroke="#8b5cf6"
-                strokeWidth={2}
-                dash={[4, 4]}
-                listening={false}
-              />
-            )}
-            {/* Loading indicator */}
-            {isLoadingSegmentEverything && (
-              <Rect
-                x={0}
-                y={0}
-                width={currentImage?.width || 100}
-                height={currentImage?.height || 100}
-                fill="rgba(139, 92, 246, 0.1)"
-                listening={false}
-              />
-            )}
-          </Layer>
-        )}
 
         {/* Annotations layer (bboxes) - only show when image is loaded and annotations match current image */}
         <Layer>

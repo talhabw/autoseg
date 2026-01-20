@@ -6,7 +6,6 @@ import type {
   Annotation, 
   SegmentResult, 
   PropagateResult,
-  SegmentEverythingResult,
   FindAllInstancesResult,
   PropagateAdvancedResult,
   PropagationMode,
@@ -227,25 +226,6 @@ export async function propagate(
 }
 
 // ==================== Advanced ML Features ====================
-
-/**
- * Segment all objects in an image using SAM grid prompting.
- * Results are cached on the server for use with find-instances and IoU matching.
- */
-export async function segmentEverything(
-  imageId: number,
-  options: {
-    minMaskArea?: number;
-    nmsIouThreshold?: number;
-  } = {}
-): Promise<SegmentEverythingResult> {
-  const response = await api.post<SegmentEverythingResult>('/ml/segment/everything', {
-    image_id: imageId,
-    min_mask_area: options.minMaskArea ?? 100,
-    nms_iou_threshold: options.nmsIouThreshold ?? 0.7,
-  });
-  return response.data;
-}
 
 /**
  * Find all instances of a class in the target image.
