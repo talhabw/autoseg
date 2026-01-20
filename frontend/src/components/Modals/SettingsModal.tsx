@@ -1,6 +1,7 @@
 import { useUIStore, type EmbedModel } from '../../stores/uiStore';
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
+import type { PropagationMode } from '../../types';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,12 @@ export function SettingsModal() {
     setStopOnSizeMismatch,
     topK,
     setTopK,
+    propagationMode,
+    setPropagationMode,
+    iouVerify,
+    setIouVerify,
+    iouThreshold,
+    setIouThreshold,
   } = useUIStore();
 
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
@@ -140,6 +147,61 @@ export function SettingsModal() {
             </h3>
 
             <div className="space-y-6 pl-2">
+              <div className="space-y-2">
+                <Label>Propagation Mode</Label>
+                <Select
+                  value={propagationMode}
+                  onValueChange={(val) => setPropagationMode(val as PropagationMode)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (Recommended)</SelectItem>
+                    <SelectItem value="peak">Peak-based</SelectItem>
+                    <SelectItem value="dense">Dense correspondence</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Auto tries peak-based first, falls back to dense if needed. Dense uses legacy-style patch correspondence.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="iou-verify"
+                  checked={iouVerify}
+                  onCheckedChange={setIouVerify}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="iou-verify">IoU Verification</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Verify propagation results against dense prediction. Rejects results below threshold.
+                  </p>
+                </div>
+              </div>
+
+              {iouVerify && (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label>IoU Threshold</Label>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                      {(iouThreshold * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={[iouThreshold * 100]}
+                    onValueChange={(vals) => setIouThreshold(vals[0] / 100)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Minimum IoU between SAM result and dense prediction to accept.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>Peak Candidates (Top-K)</Label>

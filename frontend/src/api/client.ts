@@ -5,7 +5,11 @@ import type {
   Label, 
   Annotation, 
   SegmentResult, 
-  PropagateResult 
+  PropagateResult,
+  SegmentEverythingResult,
+  FindAllInstancesResult,
+  PropagateAdvancedResult,
+  PropagationMode,
 } from '../types';
 
 const api = axios.create({
@@ -218,6 +222,93 @@ export async function propagate(
     stop_on_size_mismatch: stopOnSizeMismatch,
     skip_duplicate_threshold: skipDuplicateThreshold,
     top_k: topK,
+  });
+  return response.data;
+}
+
+// ==================== Advanced ML Features ====================
+
+/**
+ * Segment all objects in an image using SAM grid prompting.
+ * Results are cached on the server for use with find-instances and IoU matching.
+ */
+export async function segmentEverything(
+  imageId: number,
+  options: {
+    minMaskArea?: number;
+    nmsIouThreshold?: number;
+  } = {}
+): Promise<SegmentEverythingResult> {
+  const response = await api.post<SegmentEverythingResult>('/ml/segment/everything', {
+    image_id: imageId,
+    min_mask_area: options.minMaskArea ?? 100,
+    nms_iou_threshold: options.nmsIouThreshold ?? 0.7,
+  });
+  return response.data;
+}
+
+/**
+ * Find all instances of a class in the target image.
+ * Uses a reference annotation to define what the class looks like.
+ */
+export async function findAllInstances(
+  referenceImageId: number,
+  referenceAnnotationId: number,
+  targetImageId: number,
+  options: {
+    minSimilarity?: number;
+    maxInstances?: number;
+    sizeTolerance?: number;
+    useCachedMasks?: boolean;
+  } = {}
+): Promise<FindAllInstancesResult> {
+  const response = await api.post<FindAllInstancesResult>('/ml/find-instances', {
+    reference_image_id: referenceImageId,
+    reference_annotation_id: referenceAnnotationId,
+    target_image_id: targetImageId,
+    min_similarity: options.minSimilarity ?? 0.6,
+    max_instances: options.maxInstances ?? 20,
+    size_tolerance: options.sizeTolerance ?? 0.5,
+    use_cached_masks: options.useCachedMasks ?? true,
+  });
+  return response.data;
+}
+
+/**
+ * Advanced propagation with mode selection and IoU verification.
+ * 
+ * Modes:
+ * - "peak": Peak-based propagation (default)
+ * - "dense": Dense feature correspondence (legacy DINO style)  
+ * - "auto": Try peak first, fall back to dense if needed
+ */
+export async function propagateAdvanced(
+  sourceImageId: number,
+  targetImageId: number,
+  sourceAnnotationId: number,
+  options: {
+    mode?: PropagationMode;
+    iouVerify?: boolean;
+    iouThreshold?: number;
+    useCachedMasks?: boolean;
+    sizeMinRatio?: number;
+    sizeMaxRatio?: number;
+    stopOnSizeMismatch?: boolean;
+    topK?: number;
+  } = {}
+): Promise<PropagateAdvancedResult> {
+  const response = await api.post<PropagateAdvancedResult>('/ml/propagate/advanced', {
+    source_image_id: sourceImageId,
+    target_image_id: targetImageId,
+    source_annotation_id: sourceAnnotationId,
+    mode: options.mode ?? 'auto',
+    iou_verify: options.iouVerify ?? true,
+    iou_threshold: options.iouThreshold ?? 0.3,
+    use_cached_masks: options.useCachedMasks ?? true,
+    size_min_ratio: options.sizeMinRatio ?? 0.8,
+    size_max_ratio: options.sizeMaxRatio ?? 1.2,
+    stop_on_size_mismatch: options.stopOnSizeMismatch ?? true,
+    top_k: options.topK ?? 5,
   });
   return response.data;
 }

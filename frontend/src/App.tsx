@@ -245,17 +245,40 @@ function AppContent() {
           console.log(`${logPrefix} Propagating annotation ${i + 1}/${sourceAnnotations.length} (id=${ann.id})`);
 
           // Get propagation settings from store
-          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK } = useUIStore.getState();
-          const result = await api.propagate(
-            currentImg.id,
-            targetImageId,
-            ann.id,
-            sizeMinRatio,
-            sizeMaxRatio,
-            stopOnSizeMismatch,
-            0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
-            topK
-          );
+          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+          
+          // Use advanced propagation API when mode is not 'peak' or IoU verification is enabled
+          const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
+          
+          let result;
+          if (useAdvancedApi) {
+            result = await api.propagateAdvanced(
+              currentImg.id,
+              targetImageId,
+              ann.id,
+              {
+                mode: propagationMode,
+                iouVerify,
+                iouThreshold,
+                useCachedMasks: true,
+                sizeMinRatio,
+                sizeMaxRatio,
+                stopOnSizeMismatch,
+                topK,
+              }
+            );
+          } else {
+            result = await api.propagate(
+              currentImg.id,
+              targetImageId,
+              ann.id,
+              sizeMinRatio,
+              sizeMaxRatio,
+              stopOnSizeMismatch,
+              0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
+              topK
+            );
+          }
 
           // Check if this was a duplicate
           if (result.duplicate_skipped) {

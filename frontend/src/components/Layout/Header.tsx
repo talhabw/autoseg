@@ -16,7 +16,8 @@ import {
   Settings,
   FilePlus,
   FolderOpen,
-  Download
+  Download,
+  Grid3X3,
 } from 'lucide-react';
 
 export function Header() {
@@ -38,6 +39,9 @@ export function Header() {
     setShowExportModal,
     setShowSettingsModal,
     setStatusMessage,
+    segmentEverythingEnabled,
+    setSegmentEverythingEnabled,
+    cachedMaskCount,
   } = useUIStore();
 
   const { project } = useProjectStore();
@@ -122,6 +126,30 @@ export function Header() {
           )}
           <span className="hidden sm:inline">Segment</span>
           <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(S)</span>
+        </Button>
+
+        {/* Action: Auto-detect (Segment Everything) */}
+        <Button
+          variant={segmentEverythingEnabled ? "secondary" : "outline"}
+          size="sm"
+          className={`h-8 gap-2 transition-all ${segmentEverythingEnabled
+            ? 'bg-purple-600/20 text-purple-500 border-purple-600/50 hover:bg-purple-600/30'
+            : 'text-muted-foreground'}`}
+          onClick={async () => {
+            if (!samLoaded && !segmentEverythingEnabled) {
+              setStatusMessage('Loading SAM...');
+              await loadSAM();
+            }
+            setSegmentEverythingEnabled(!segmentEverythingEnabled);
+          }}
+          disabled={isLoadingModel}
+          title="Toggle Auto-detect Preview - click detected objects to create annotations"
+        >
+          <Grid3X3 className="h-4 w-4" />
+          <span className="hidden sm:inline">Auto-detect</span>
+          {cachedMaskCount > 0 && segmentEverythingEnabled && (
+            <span className="text-[10px] font-mono opacity-75">({cachedMaskCount})</span>
+          )}
         </Button>
 
         {/* Action: Track */}

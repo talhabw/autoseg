@@ -461,3 +461,266 @@ async def propagate(request: PropagateRequest):
         logger.error(f"Propagation failed: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Propagation failed: {e}")
+
+
+# ==================== New Features: Segment Everything, Find All Instances ====================
+
+
+class SegmentEverythingRequest(BaseModel):
+    image_id: int
+    min_mask_area: int = 100
+    nms_iou_threshold: float = 0.7
+
+
+class SegmentEverythingResponse(BaseModel):
+    masks: list[dict]  # List of {bbox, mask_rle, score, area}
+    count: int
+
+
+class FindAllInstancesRequest(BaseModel):
+    reference_image_id: int
+    reference_annotation_id: int
+    target_image_id: int
+    min_similarity: float = 0.6
+    max_instances: int = 20
+    size_tolerance: float = 0.5  # 0.5 = 50%-200% of reference size
+    use_cached_masks: bool = True
+
+
+class FindAllInstancesResponse(BaseModel):
+    instances: list[dict]  # List of {bbox, mask_rle, polygon, confidence, method}
+    count: int
+
+
+class PropagateAdvancedRequest(BaseModel):
+    source_image_id: int
+    target_image_id: int
+    source_annotation_id: int
+    mode: str = "auto"  # "peak", "dense", or "auto"
+    iou_verify: bool = True
+    iou_threshold: float = 0.3
+    use_cached_masks: bool = True
+    size_min_ratio: float = 0.8
+    size_max_ratio: float = 1.2
+    stop_on_size_mismatch: bool = True
+    top_k: int = 5
+
+
+class PropagateAdvancedResponse(BaseModel):
+    bbox: list[float]
+    mask_rle: dict
+    polygon: list[float]
+    confidence: float
+    fallback_used: bool
+    area_ratio: float
+    method: str  # "peak", "dense", or "iou_match"
+    iou_score: Optional[float]
+
+
+@router.post("/segment/everything", response_model=SegmentEverythingResponse)
+async def segment_everything(request: SegmentEverythingRequest):
+    """
+    Segment all objects in an image using SAM.
+
+    Returns all detected masks, which can be used for:
+    - Quick annotation by clicking on pre-computed masks
+    - Finding instances of a class via IoU matching
+    - Validating propagation results
+    """
+    segment_service = get_segment_service()
+
+    if not segment_service.is_loaded():
+        raise HTTPException(
+            status_code=400, detail="SAM not loaded. Call /api/ml/sam/load first"
+        )
+
+    # Load image
+    image_rgb, width, height = _load_image(request.image_id)
+
+    try:
+        # Run segment everything
+        cached_masks = segment_service.segment_everything(
+            image_rgb=image_rgb,
+            image_id=str(request.image_id),
+            min_mask_area=request.min_mask_area,
+            nms_iou_threshold=request.nms_iou_threshold,
+        )
+
+        # Convert to response format
+        masks = []
+        for cm in cached_masks:
+            rle = mask_to_rle(cm.mask)
+            masks.append(
+                {
+                    "bbox": cm.bbox,
+                    "mask_rle": rle,
+                    "score": cm.score,
+                    "area": cm.area,
+                }
+            )
+
+        return SegmentEverythingResponse(masks=masks, count=len(masks))
+
+    except Exception as e:
+        logger.error(f"Segment everything failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Segment everything failed: {e}")
+
+
+@router.post("/find-instances", response_model=FindAllInstancesResponse)
+async def find_all_instances(request: FindAllInstancesRequest):
+    """
+    Find all instances of a class in the target image.
+
+    Uses a reference annotation to define what the class looks like,
+    then finds all similar objects in the target image.
+
+    This enables per-class auto-segmentation similar to the legacy FastSAM approach.
+    """
+    global _propagate_service
+
+    if _propagate_service is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Propagation not loaded. Call /api/ml/propagate/load first",
+        )
+
+    store = get_store()
+
+    # Get reference annotation
+    ref_ann = store.get_annotation_by_id(request.reference_annotation_id)
+    if ref_ann is None:
+        raise HTTPException(status_code=404, detail="Reference annotation not found")
+
+    ref_bbox = ref_ann.bbox_xyxy
+    if ref_bbox is None:
+        raise HTTPException(status_code=400, detail="Reference annotation has no bbox")
+
+    ref_mask = None
+    if ref_ann.mask_rle:
+        ref_mask = rle_to_mask(ref_ann.mask_rle)
+
+    # Load images
+    ref_image, _, _ = _load_image(request.reference_image_id)
+    target_image, tgt_w, tgt_h = _load_image(request.target_image_id)
+
+    try:
+        results = _propagate_service.find_all_instances(
+            reference_image=ref_image,
+            reference_bbox=ref_bbox,
+            reference_mask=ref_mask,
+            target_image=target_image,
+            reference_image_id=str(request.reference_image_id),
+            target_image_id=str(request.target_image_id),
+            annotation_id=request.reference_annotation_id,
+            min_similarity=request.min_similarity,
+            max_instances=request.max_instances,
+            use_cached_masks=request.use_cached_masks,
+            size_tolerance=request.size_tolerance,
+        )
+
+        # Convert to response format
+        instances = []
+        for r in results:
+            rle = mask_to_rle(r.mask)
+            polygon = mask_to_yolo_polygon(r.mask, tgt_w, tgt_h)
+            instances.append(
+                {
+                    "bbox": r.bbox,
+                    "mask_rle": rle,
+                    "polygon": polygon,
+                    "confidence": r.confidence,
+                    "method": r.method,
+                    "area_ratio": r.area_ratio,
+                }
+            )
+
+        return FindAllInstancesResponse(instances=instances, count=len(instances))
+
+    except Exception as e:
+        logger.error(f"Find instances failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Find instances failed: {e}")
+
+
+@router.post("/propagate/advanced", response_model=PropagateAdvancedResponse)
+async def propagate_advanced(request: PropagateAdvancedRequest):
+    """
+    Advanced propagation with mode selection and IoU verification.
+
+    Modes:
+    - "peak": Peak-based propagation (default behavior)
+    - "dense": Dense feature correspondence (legacy DINO style)
+    - "auto": Try peak first, fall back to dense
+
+    When iou_verify is True, results are verified against dense prediction.
+    """
+    global _propagate_service
+
+    if _propagate_service is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Propagation not loaded. Call /api/ml/propagate/load first",
+        )
+
+    store = get_store()
+
+    # Get source annotation
+    ann = store.get_annotation_by_id(request.source_annotation_id)
+    if ann is None:
+        raise HTTPException(status_code=404, detail="Source annotation not found")
+
+    source_bbox = ann.bbox_xyxy
+    if source_bbox is None:
+        raise HTTPException(status_code=400, detail="Source annotation has no bbox")
+
+    source_mask = None
+    if ann.mask_rle:
+        source_mask = rle_to_mask(ann.mask_rle)
+
+    # Load images
+    source_image, _, _ = _load_image(request.source_image_id)
+    target_image, tgt_w, tgt_h = _load_image(request.target_image_id)
+
+    try:
+        result = _propagate_service.propagate_with_dense_fallback(
+            source_image=source_image,
+            source_bbox=source_bbox,
+            source_mask=source_mask,
+            target_image=target_image,
+            source_image_id=str(request.source_image_id),
+            target_image_id=str(request.target_image_id),
+            annotation_id=request.source_annotation_id,
+            mode=request.mode,
+            iou_verify=request.iou_verify,
+            iou_threshold=request.iou_threshold,
+            use_cached_masks=request.use_cached_masks,
+            size_min_ratio=request.size_min_ratio,
+            size_max_ratio=request.size_max_ratio,
+            stop_on_size_mismatch=request.stop_on_size_mismatch,
+            top_k=request.top_k,
+        )
+
+        # Convert to response
+        rle = mask_to_rle(result.mask)
+        polygon = mask_to_yolo_polygon(result.mask, tgt_w, tgt_h)
+
+        return PropagateAdvancedResponse(
+            bbox=result.bbox,
+            mask_rle=rle,
+            polygon=polygon,
+            confidence=result.confidence,
+            fallback_used=result.fallback_used,
+            area_ratio=result.area_ratio,
+            method=result.method,
+            iou_score=result.iou_score,
+        )
+
+    except PropagationSizeMismatchError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PropagationNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Advanced propagation failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Advanced propagation failed: {e}")
