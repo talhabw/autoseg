@@ -426,8 +426,9 @@ class SegmentService:
             raise RuntimeError("No image set. Call set_image() or provide image_rgb.")
 
         # Get image dimensions from state
-        # SAM3's image state contains the original image size
-        img_h, img_w = self._image_state.original_size
+        # SAM3's image state is a dict with original_height and original_width
+        img_h = self._image_state["original_height"]
+        img_w = self._image_state["original_width"]
 
         logger.info(f"Running segment_everything on {img_w}x{img_h} image...")
 
