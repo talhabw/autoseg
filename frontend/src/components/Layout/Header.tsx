@@ -1,6 +1,7 @@
 
 import { useUIStore } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { stopAutoTracking } from '../../App';
 
 
 import type { InteractionMode } from '../../types';
@@ -157,9 +158,17 @@ export function Header() {
             className={`h-8 gap-2 transition-all ${autoNext
               ? 'bg-cyan-500/20 text-cyan-500 border-cyan-500/50 hover:bg-cyan-500/30'
               : 'text-muted-foreground'}`}
-            onClick={() => setAutoNext(!autoNext)}
+            onClick={() => {
+              if (autoNext) {
+                // Stop auto-tracking
+                stopAutoTracking();
+                setAutoNext(false);
+              } else {
+                setAutoNext(true);
+              }
+            }}
             disabled={isPropagating}
-            title="Auto-advance to next image after tracking"
+            title="Auto-advance to next image after tracking (T to toggle)"
           >
             <FastForward className="h-4 w-4" />
             <span className="hidden sm:inline">Auto</span>

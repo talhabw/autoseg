@@ -168,6 +168,21 @@ export async function findFallbackReference(
   return response.data;
 }
 
+export interface MissingAnnotationsResult {
+  image_indices: number[];
+  total_missing: number;
+}
+
+export async function findImagesMissingAnnotations(
+  projectId: number,
+  labelId?: number
+): Promise<MissingAnnotationsResult> {
+  const response = await api.get<MissingAnnotationsResult>(`/annotations/missing/${projectId}`, {
+    params: labelId !== undefined ? { label_id: labelId } : {},
+  });
+  return response.data;
+}
+
 // ==================== ML ====================
 
 export async function loadSAM(device = 'cuda'): Promise<void> {

@@ -22,6 +22,11 @@ let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
 let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
 
+// Export function to stop auto-tracking (used by UI components)
+export function stopAutoTracking() {
+  _pendingAutoNext = false;
+}
+
 function AppContent() {
   const { images, currentImageIndex, project, tryOpenLastProject } = useProjectStore();
   const {
@@ -383,10 +388,16 @@ function AppContent() {
             fallbackCount++;
           } catch (err: any) {
             console.error(`${logPrefix} Fallback propagation failed for label ${labelId}:`, err);
-            const errorMessage = err.response?.data?.detail || 'Fallback propagation failed';
-            useUIStore.getState().addToast(`Fallback failed for label ${labelId}: ${errorMessage}`, 'error');
+            // Don't show toast for each failure - just log it
+            // We'll continue to next image anyway
           }
         }
+      }
+
+      // Log summary of failures (but don't stop)
+      const totalFailed = failedLabels.size - fallbackCount;
+      if (totalFailed > 0) {
+        console.log(`${logPrefix} ⚠️ ${totalFailed} labels failed (no fallback found), continuing anyway`);
       }
 
       // Check if request was superseded before creating annotations
@@ -427,6 +438,9 @@ function AppContent() {
       let message = `Tracked ${propagationResults.length}/${sourceAnnotations.length}`;
       if (fallbackCount > 0) {
         message += ` (${fallbackCount} via fallback)`;
+      }
+      if (totalFailed > 0) {
+        message += ` (${totalFailed} failed)`;
       }
       if (duplicateSkipCount > 0) {
         message += ` (${duplicateSkipCount} duplicate${duplicateSkipCount > 1 ? 's' : ''} skipped)`;
@@ -500,6 +514,37 @@ function AppContent() {
     }
   }, []);
 
+  // Jump to next unlabeled image (no annotations at all)
+  const handleNextUnlabeled = useCallback(async () => {
+    try {
+      const { project } = useProjectStore.getState();
+      if (!project) {
+        useUIStore.getState().addToast('No project open', 'warning');
+        return;
+      }
+
+      const result = await api.findImagesMissingAnnotations(project.id);
+      if (result.image_indices.length === 0) {
+        useUIStore.getState().addToast('All images have annotations!', 'success');
+        return;
+      }
+
+      // Find next unlabeled image after current index
+      const currentIdx = useProjectStore.getState().currentImageIndex;
+      const nextIdx = result.image_indices.find(idx => idx > currentIdx);
+      if (nextIdx !== undefined) {
+        useProjectStore.getState().setCurrentImageIndex(nextIdx);
+        useUIStore.getState().addToast(`Jumped to image ${nextIdx + 1} (unlabeled) - ${result.total_missing} total`, 'info', 2000);
+      } else {
+        // Wrap around to first unlabeled
+        useProjectStore.getState().setCurrentImageIndex(result.image_indices[0]);
+        useUIStore.getState().addToast(`Wrapped to image ${result.image_indices[0] + 1} (unlabeled) - ${result.total_missing} total`, 'info', 2000);
+      }
+    } catch (err) {
+      console.error('Failed to get unlabeled images:', err);
+    }
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -543,11 +588,27 @@ function AppContent() {
           setModeAction('refine');
           break;
         case 't':
-          // When enabling track mode, auto-load models if not loaded
-          if (!trackEnabled && !propLoaded) {
-            loadProp().then(() => setTrack(true));
+          // T behavior depends on current state:
+          // - If track mode OFF: enable track mode (auto-load models if needed)
+          // - If track mode ON: toggle auto-next (allows stopping auto-tracking)
+          if (!trackEnabled) {
+            if (!propLoaded) {
+              loadProp().then(() => setTrack(true));
+            } else {
+              setTrack(true);
+            }
           } else {
-            setTrack(!trackEnabled);
+            // Track mode is on - toggle auto-next
+            const { autoNext: currentAutoNext, setAutoNext: setAuto } = useUIStore.getState();
+            if (currentAutoNext) {
+              // Stop auto-tracking
+              _pendingAutoNext = false;
+              setAuto(false);
+              useUIStore.getState().addToast('Auto-tracking stopped', 'info', 1500);
+            } else {
+              setAuto(true);
+              useUIStore.getState().addToast('Auto-tracking enabled', 'success', 1500);
+            }
           }
           break;
         case 'q':
@@ -570,6 +631,10 @@ function AppContent() {
         case ']':
           // Jump to next pending image
           handleNextPending();
+          break;
+        case '[':
+          // Jump to next unlabeled image (no annotations)
+          handleNextUnlabeled();
           break;
         case 's':
           if (currentMode === 'refine' || selectedAnn) {

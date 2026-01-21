@@ -202,3 +202,50 @@ async def find_fallback_reference(
                 )
 
     return FallbackReferenceResponse(found=False)
+
+
+class MissingAnnotationsResponse(BaseModel):
+    """Response for images missing annotations for a specific label."""
+
+    image_indices: list[int]
+    total_missing: int
+
+
+@router.get("/missing/{project_id}", response_model=MissingAnnotationsResponse)
+async def find_images_missing_annotations(
+    project_id: int,
+    label_id: Optional[int] = None,
+):
+    """
+    Find images that are missing annotations.
+
+    If label_id is provided, finds images missing that specific label.
+    If label_id is None, finds images with no annotations at all.
+
+    Returns image indices sorted by order_index.
+    """
+    store = get_store()
+
+    # Get all images in project
+    images = store.list_images(project_id)
+    images_sorted = sorted(images, key=lambda img: img.order_index)
+
+    missing_indices = []
+
+    for img in images_sorted:
+        annotations = store.list_annotations(img.id)
+
+        if label_id is not None:
+            # Check if this specific label is missing
+            has_label = any(ann.label_id == label_id for ann in annotations)
+            if not has_label:
+                missing_indices.append(img.order_index)
+        else:
+            # Check if image has no annotations at all
+            if len(annotations) == 0:
+                missing_indices.append(img.order_index)
+
+    return MissingAnnotationsResponse(
+        image_indices=missing_indices,
+        total_missing=len(missing_indices),
+    )
