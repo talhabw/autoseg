@@ -20,6 +20,7 @@ const queryClient = new QueryClient();
 let _propagationLock = false;
 let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
+let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
 
 function AppContent() {
   const { images, currentImageIndex, project, tryOpenLastProject } = useProjectStore();
@@ -59,7 +60,19 @@ function AppContent() {
   // Load annotations when image changes
   useEffect(() => {
     if (currentImage) {
-      loadAnnotations(currentImage.id);
+      loadAnnotations(currentImage.id).then(() => {
+        // Check if we should continue auto-propagation
+        if (_pendingAutoNext) {
+          _pendingAutoNext = false;
+          const { autoNext, trackModeEnabled } = useUIStore.getState();
+          const { currentImageIndex: idx, images: imgs } = useProjectStore.getState();
+          
+          if (autoNext && trackModeEnabled && idx < imgs.length - 1 && !_propagationLock) {
+            // Small delay to let React render, but much shorter than 500ms
+            setTimeout(() => handlePropagateAndNext(), 50);
+          }
+        }
+      });
     } else {
       clearAnnotations();
     }
@@ -424,24 +437,17 @@ function AppContent() {
       const prevIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} 🚀 Navigating: currentIdx BEFORE nextImage() = ${prevIdx}`);
 
+      // Set auto-next flag before navigation if enabled
+      const { autoNext: shouldAutoNext } = useUIStore.getState();
+      if (shouldAutoNext && prevIdx + 1 < currentImages.length - 1) {
+        console.log(`${logPrefix} 🔁 Auto-next enabled, setting pending flag`);
+        _pendingAutoNext = true;
+      }
+
       useProjectStore.getState().nextImage();
 
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
-
-      // Auto-next: if enabled, schedule next propagation after a short delay
-      const { autoNext: shouldAutoNext } = useUIStore.getState();
-      if (shouldAutoNext && newIdx < currentImages.length - 1) {
-        console.log(`${logPrefix} 🔁 Auto-next enabled, scheduling next propagation...`);
-        // Use setTimeout to allow React to render and annotations to load
-        setTimeout(() => {
-          // Check if we're still in auto mode and track mode
-          const { autoNext: stillAutoNext, trackModeEnabled } = useUIStore.getState();
-          if (stillAutoNext && trackModeEnabled && !_propagationLock) {
-            handlePropagateAndNext();
-          }
-        }, 500); // 500ms delay to allow UI to update
-      }
     } finally {
       console.log(`${logPrefix} 🔓 Releasing lock, isPropagating=false`);
       setIsPropagating(false);
