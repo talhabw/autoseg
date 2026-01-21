@@ -168,10 +168,11 @@ export function Header() {
               }
             }}
             disabled={isPropagating}
-            title="Auto-advance to next image after tracking (T to toggle)"
+            title="Auto-advance after tracking (Shift+T)"
           >
             <FastForward className="h-4 w-4" />
             <span className="hidden sm:inline">Auto</span>
+            <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(⇧T)</span>
           </Button>
         )}
 

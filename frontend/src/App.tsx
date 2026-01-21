@@ -588,26 +588,35 @@ function AppContent() {
           setModeAction('refine');
           break;
         case 't':
-          // T behavior depends on current state:
-          // - If track mode OFF: enable track mode (auto-load models if needed)
-          // - If track mode ON: toggle auto-next (allows stopping auto-tracking)
-          if (!trackEnabled) {
-            if (!propLoaded) {
-              loadProp().then(() => setTrack(true));
+          if (e.shiftKey) {
+            // Shift+T: Toggle auto-tracking (only when track mode is on)
+            if (trackEnabled) {
+              const { autoNext: currentAutoNext, setAutoNext: setAuto } = useUIStore.getState();
+              if (currentAutoNext) {
+                // Stop auto-tracking
+                _pendingAutoNext = false;
+                setAuto(false);
+                useUIStore.getState().addToast('Auto-tracking stopped', 'info', 1500);
+              } else {
+                setAuto(true);
+                useUIStore.getState().addToast('Auto-tracking enabled', 'success', 1500);
+              }
             } else {
-              setTrack(true);
+              useUIStore.getState().addToast('Enable track mode first (T)', 'warning', 1500);
             }
           } else {
-            // Track mode is on - toggle auto-next
-            const { autoNext: currentAutoNext, setAutoNext: setAuto } = useUIStore.getState();
-            if (currentAutoNext) {
-              // Stop auto-tracking
-              _pendingAutoNext = false;
-              setAuto(false);
-              useUIStore.getState().addToast('Auto-tracking stopped', 'info', 1500);
+            // T: Toggle track mode on/off
+            if (!trackEnabled) {
+              if (!propLoaded) {
+                loadProp().then(() => setTrack(true));
+              } else {
+                setTrack(true);
+              }
             } else {
-              setAuto(true);
-              useUIStore.getState().addToast('Auto-tracking enabled', 'success', 1500);
+              // Turn off track mode (also disables auto-next)
+              _pendingAutoNext = false;
+              useUIStore.getState().setAutoNext(false);
+              setTrack(false);
             }
           }
           break;
