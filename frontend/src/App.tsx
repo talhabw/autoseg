@@ -153,7 +153,7 @@ function AppContent() {
     console.log(`${logPrefix} ✅ Lock acquired, requestId=${currentRequestId}`);
 
     // Read fresh state from stores to avoid closure issues
-    const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext } = useProjectStore.getState();
+    const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext, project } = useProjectStore.getState();
     const currentImg = currentImages[currentIdx];
 
     console.log(`${logPrefix} State: currentIdx=${currentIdx}, currentImg.id=${currentImg?.id}, imageCount=${currentImages.length}`);
@@ -203,6 +203,11 @@ function AppContent() {
 
     setIsPropagating(true);
     console.log(`${logPrefix} isPropagating=true`);
+
+    // Track which labels failed propagation from previous image
+    const failedLabels = new Set<number>();
+    let successCount = 0;
+    let fallbackCount = 0;
 
     try {
       const { propagationLoaded: propLoaded, loadPropagation: loadProp, setStatusMessage: setStatus } = useUIStore.getState();
@@ -299,11 +304,75 @@ function AppContent() {
             mask_rle: result.mask_rle,
             polygon: result.polygon,
           });
+          successCount++;
         } catch (err: any) {
           console.error(`${logPrefix} Propagation failed for annotation:`, ann.id, err);
-          // Show error in UI
-          const errorMessage = err.response?.data?.detail || 'Propagation failed';
-          useUIStore.getState().addToast(`Error propagating annotation ${ann.id}: ${errorMessage}`, 'error');
+          // Track this label as failed for fallback attempt
+          failedLabels.add(ann.label_id);
+        }
+      }
+
+      // Try fallback for failed labels (if we have a project)
+      if (failedLabels.size > 0 && project) {
+        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels...`);
+        setStatus(`Finding fallback references for ${failedLabels.size} labels...`);
+
+        for (const labelId of failedLabels) {
+          try {
+            // Find a fallback reference annotation (approved annotation from earlier images)
+            const fallbackResult = await api.findFallbackReference(
+              labelId,
+              currentIdx + 1, // beforeImageIndex - the target image index
+              project.id
+            );
+
+            if (!fallbackResult.found || !fallbackResult.annotation) {
+              console.log(`${logPrefix} No fallback found for label ${labelId}`);
+              useUIStore.getState().addToast(`No reference found for label ${labelId}`, 'warning');
+              continue;
+            }
+
+            console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index}`);
+
+            // Get settings again
+            const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+
+            // Propagate from the fallback reference
+            const result = await api.propagateAdvanced(
+              fallbackResult.annotation.image_id,
+              targetImageId,
+              fallbackResult.annotation.id,
+              {
+                mode: propagationMode,
+                iouVerify,
+                iouThreshold,
+                useCachedMasks: true,
+                sizeMinRatio,
+                sizeMaxRatio,
+                stopOnSizeMismatch,
+                topK,
+              }
+            );
+
+            if (result.duplicate_skipped) {
+              console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+              duplicateSkipCount++;
+              continue;
+            }
+
+            console.log(`${logPrefix} Fallback propagation success for label ${labelId}`);
+            propagationResults.push({
+              label_id: labelId,
+              bbox: result.bbox,
+              mask_rle: result.mask_rle,
+              polygon: result.polygon,
+            });
+            fallbackCount++;
+          } catch (err: any) {
+            console.error(`${logPrefix} Fallback propagation failed for label ${labelId}:`, err);
+            const errorMessage = err.response?.data?.detail || 'Fallback propagation failed';
+            useUIStore.getState().addToast(`Fallback failed for label ${labelId}: ${errorMessage}`, 'error');
+          }
         }
       }
 
@@ -343,10 +412,13 @@ function AppContent() {
 
       // Build summary message
       let message = `Tracked ${propagationResults.length}/${sourceAnnotations.length}`;
+      if (fallbackCount > 0) {
+        message += ` (${fallbackCount} via fallback)`;
+      }
       if (duplicateSkipCount > 0) {
         message += ` (${duplicateSkipCount} duplicate${duplicateSkipCount > 1 ? 's' : ''} skipped)`;
       }
-      useUIStore.getState().addToast(message, 'success');
+      useUIStore.getState().addToast(message, propagationResults.length > 0 ? 'success' : 'warning');
 
       // Navigate to next image - this will trigger loadAnnotations for the new image
       const prevIdx = useProjectStore.getState().currentImageIndex;
@@ -357,7 +429,19 @@ function AppContent() {
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
 
-      // Auto-clear logic removed as Toast handles it
+      // Auto-next: if enabled, schedule next propagation after a short delay
+      const { autoNext: shouldAutoNext } = useUIStore.getState();
+      if (shouldAutoNext && newIdx < currentImages.length - 1) {
+        console.log(`${logPrefix} 🔁 Auto-next enabled, scheduling next propagation...`);
+        // Use setTimeout to allow React to render and annotations to load
+        setTimeout(() => {
+          // Check if we're still in auto mode and track mode
+          const { autoNext: stillAutoNext, trackModeEnabled } = useUIStore.getState();
+          if (stillAutoNext && trackModeEnabled && !_propagationLock) {
+            handlePropagateAndNext();
+          }
+        }, 500); // 500ms delay to allow UI to update
+      }
     } finally {
       console.log(`${logPrefix} 🔓 Releasing lock, isPropagating=false`);
       setIsPropagating(false);

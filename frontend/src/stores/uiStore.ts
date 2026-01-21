@@ -24,6 +24,7 @@ interface UIState {
   propagationMode: PropagationMode; // 'peak', 'dense', or 'auto'
   iouVerify: boolean; // Whether to verify results against dense prediction
   iouThreshold: number; // Minimum IoU with dense prediction to accept
+  autoNext: boolean; // Auto-advance to next image after propagation
   
   // Session state (not persisted)
   mode: InteractionMode;
@@ -68,6 +69,7 @@ interface UIState {
   setPropagationMode: (mode: PropagationMode) => void;
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
+  setAutoNext: (enabled: boolean) => void;
   
   // Status
   setStatusMessage: (message: string) => void;
@@ -90,6 +92,7 @@ export const useUIStore = create<UIState>()(
       propagationMode: 'auto', // Default: auto mode tries peak then dense
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
+      autoNext: false, // Default: manual navigation
       
       // Session state
       mode: 'view',
@@ -188,6 +191,7 @@ export const useUIStore = create<UIState>()(
       setPropagationMode: (mode) => set({ propagationMode: mode }),
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
+      setAutoNext: (enabled) => set({ autoNext: enabled }),
 
       setStatusMessage: (message) => set({ statusMessage: message }),
       setIsPropagating: (value) => set({ isPropagating: value }),
@@ -219,6 +223,7 @@ export const useUIStore = create<UIState>()(
         propagationMode: state.propagationMode,
         iouVerify: state.iouVerify,
         iouThreshold: state.iouThreshold,
+        autoNext: state.autoNext,
       }),
     }
   )

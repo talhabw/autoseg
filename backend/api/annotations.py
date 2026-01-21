@@ -146,18 +146,59 @@ async def delete_annotation(annotation_id: int):
 async def delete_all_annotations(project_id: int):
     """Delete all annotations in a project. USE WITH CAUTION."""
     store = get_store()
-    
+
     try:
         # Get all images in project
         images = store.list_images(project_id)
         total_deleted = 0
-        
+
         for image in images:
             annotations = store.list_annotations(image.id)
             for ann in annotations:
                 store.delete_annotation(ann.id)
                 total_deleted += 1
-        
+
         return {"status": "deleted", "count": total_deleted}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class FallbackReferenceResponse(BaseModel):
+    found: bool
+    annotation: Optional[AnnotationResponse] = None
+    image_index: Optional[int] = None
+
+
+@router.get("/fallback/{label_id}", response_model=FallbackReferenceResponse)
+async def find_fallback_reference(
+    label_id: int,
+    before_image_index: int,
+    project_id: int,
+):
+    """
+    Find the first approved annotation for a label that can be used as a fallback reference.
+
+    Searches backwards from before_image_index to find an approved annotation.
+    This is used when propagation from the previous image fails.
+    """
+    store = get_store()
+
+    # Get all images in project, sorted by order_index
+    images = store.list_images(project_id)
+    images_sorted = sorted(images, key=lambda img: img.order_index)
+
+    # Search backwards from before_image_index
+    for img in images_sorted:
+        if img.order_index >= before_image_index:
+            continue
+
+        annotations = store.list_annotations(img.id)
+        for ann in annotations:
+            if ann.label_id == label_id and ann.status == "approved":
+                return FallbackReferenceResponse(
+                    found=True,
+                    annotation=annotation_to_response(ann),
+                    image_index=img.order_index,
+                )
+
+    return FallbackReferenceResponse(found=False)

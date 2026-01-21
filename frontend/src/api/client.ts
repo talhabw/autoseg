@@ -148,6 +148,26 @@ export async function deleteAllAnnotations(projectId: number): Promise<{ count: 
   return { count: response.data.count };
 }
 
+export interface FallbackReferenceResult {
+  found: boolean;
+  annotation: Annotation | null;
+  image_index: number | null;
+}
+
+export async function findFallbackReference(
+  labelId: number,
+  beforeImageIndex: number,
+  projectId: number
+): Promise<FallbackReferenceResult> {
+  const response = await api.get<FallbackReferenceResult>(`/annotations/fallback/${labelId}`, {
+    params: {
+      before_image_index: beforeImageIndex,
+      project_id: projectId,
+    },
+  });
+  return response.data;
+}
+
 // ==================== ML ====================
 
 export async function loadSAM(device = 'cuda'): Promise<void> {
