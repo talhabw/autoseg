@@ -227,9 +227,10 @@ export function SettingsModal() {
                   disabled={!samLoaded}
                 />
                 <div className="flex-1 space-y-1">
-                  <Label htmlFor="keep-largest-region">Always Keep Largest Region</Label>
+                  <Label htmlFor="keep-largest-region">Keep Only Largest Region</Label>
                   <p className="text-xs text-muted-foreground">
-                    Always preserve the largest connected region, even if it's smaller than min region size.
+                    When enabled, ONLY the largest connected region is kept - all other disconnected parts are removed.
+                    When disabled, all regions larger than Min Region Size are kept.
                   </p>
                 </div>
               </div>

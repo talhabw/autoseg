@@ -160,7 +160,8 @@ def remove_small_regions(
     Args:
         mask: Binary mask of shape (H, W)
         min_area: Minimum area in pixels to keep a region (default 100)
-        keep_largest: If True, always keep the largest region regardless of min_area
+        keep_largest: If True, ONLY keep the largest region (ignores min_area)
+                     If False, keep all regions >= min_area
 
     Returns:
         Cleaned binary mask with small regions removed
@@ -185,24 +186,19 @@ def remove_small_regions(
 
     # Find regions to keep
     if keep_largest:
+        # ONLY keep the largest region - ignore all others
         largest_idx = np.argmax(region_sizes) + 1  # +1 because labels start at 1
         regions_to_keep = [largest_idx]
-
-        # Also keep other regions that meet min_area threshold
-        for i, size in enumerate(region_sizes):
-            label = i + 1
-            if size >= min_area and label != largest_idx:
-                regions_to_keep.append(label)
     else:
-        # Only keep regions that meet min_area threshold
+        # Keep all regions that meet min_area threshold
         regions_to_keep = [
             i + 1 for i, size in enumerate(region_sizes) if size >= min_area
         ]
 
-    if not regions_to_keep:
-        # If nothing meets criteria, keep largest
-        largest_idx = np.argmax(region_sizes) + 1
-        regions_to_keep = [largest_idx]
+        if not regions_to_keep:
+            # If nothing meets criteria, keep largest
+            largest_idx = np.argmax(region_sizes) + 1
+            regions_to_keep = [largest_idx]
 
     # Create cleaned mask
     cleaned_mask = np.isin(labeled_mask, regions_to_keep).astype(np.uint8)
