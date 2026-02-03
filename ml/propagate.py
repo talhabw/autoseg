@@ -1053,10 +1053,11 @@ class PropagateService:
         results = []
 
         # Calculate reference area for size filtering
+        # size_tolerance=0.5 means 50%-200% of reference size (multiplicative)
         ref_area = (reference_bbox[2] - reference_bbox[0]) * (
             reference_bbox[3] - reference_bbox[1]
         )
-        min_area = ref_area * (1 - size_tolerance)
+        min_area = ref_area / (1 + size_tolerance)
         max_area = ref_area * (1 + size_tolerance)
 
         # Get reference descriptor

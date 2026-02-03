@@ -504,6 +504,8 @@ class PropagateAdvancedResponse(BaseModel):
     area_ratio: float
     method: str  # "peak", "dense", or "iou_match"
     iou_score: Optional[float]
+    duplicate_skipped: Optional[bool] = None
+    duplicate_iou: Optional[float] = None
 
 
 @router.post("/find-instances", response_model=FindAllInstancesResponse)

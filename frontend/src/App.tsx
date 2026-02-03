@@ -132,7 +132,6 @@ function AppContent() {
       });
 
       clearPoints();
-      clearPoints();
       useUIStore.getState().addToast(`Segmentation complete (score: ${(result.score * 100).toFixed(0)}%)`, 'success');
       useUIStore.getState().setMode('refine');
     } catch (err) {
@@ -465,7 +464,7 @@ function AppContent() {
 
       // Set auto-next flag before navigation if enabled
       const { autoNext: shouldAutoNext } = useUIStore.getState();
-      if (shouldAutoNext && prevIdx + 1 < currentImages.length - 1) {
+      if (shouldAutoNext && prevIdx + 1 < currentImages.length) {
         console.log(`${logPrefix} 🔁 Auto-next enabled, setting pending flag`);
         _pendingAutoNext = true;
       }
@@ -474,6 +473,10 @@ function AppContent() {
 
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
+    } catch (err) {
+      // Clear pending flag on error to prevent unwanted auto-propagation
+      _pendingAutoNext = false;
+      throw err;
     } finally {
       console.log(`${logPrefix} 🔓 Releasing lock, isPropagating=false`);
       setIsPropagating(false);

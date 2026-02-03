@@ -187,8 +187,8 @@ async def find_fallback_reference(
     images = store.list_images(project_id)
     images_sorted = sorted(images, key=lambda img: img.order_index)
 
-    # Search backwards from before_image_index
-    for img in images_sorted:
+    # Search backwards from before_image_index (iterate in reverse to find most recent)
+    for img in reversed(images_sorted):
         if img.order_index >= before_image_index:
             continue
 
@@ -230,10 +230,13 @@ async def find_images_missing_annotations(
     images = store.list_images(project_id)
     images_sorted = sorted(images, key=lambda img: img.order_index)
 
+    # Batch query all annotations for the project (single query instead of N+1)
+    annotations_by_image = store.list_annotations_for_project(project_id)
+
     missing_indices = []
 
     for img in images_sorted:
-        annotations = store.list_annotations(img.id)
+        annotations = annotations_by_image.get(img.id, [])
 
         if label_id is not None:
             # Check if this specific label is missing
