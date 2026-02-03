@@ -26,6 +26,10 @@ interface UIState {
   iouThreshold: number; // Minimum IoU with dense prediction to accept
   autoNext: boolean; // Auto-advance to next image after propagation
   
+  // SAM settings
+  samMaskThreshold: number; // Logit threshold for mask generation (-2.0 to 2.0)
+  samMultimaskOutput: boolean; // Generate multiple mask candidates
+  
   // Session state (not persisted)
   mode: InteractionMode;
   trackModeEnabled: boolean;
@@ -71,6 +75,11 @@ interface UIState {
   setIouThreshold: (threshold: number) => void;
   setAutoNext: (enabled: boolean) => void;
   
+  // SAM settings actions
+  setSamMaskThreshold: (threshold: number) => Promise<void>;
+  setSamMultimaskOutput: (enabled: boolean) => Promise<void>;
+  syncSamSettings: () => Promise<void>;
+  
   // Status
   setStatusMessage: (message: string) => void;
   setIsPropagating: (value: boolean) => void;
@@ -93,6 +102,10 @@ export const useUIStore = create<UIState>()(
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
       autoNext: false, // Default: manual navigation
+      
+      // SAM settings
+      samMaskThreshold: 0.0, // Default: 0.0 (standard logit threshold)
+      samMultimaskOutput: true, // Default: generate multiple candidates
       
       // Session state
       mode: 'view',
@@ -152,11 +165,13 @@ export const useUIStore = create<UIState>()(
       },
 
       loadPropagation: async () => {
-        const { embedModel } = get();
+        const { embedModel, syncSamSettings } = get();
         set({ isLoadingModel: true, statusMessage: `Loading tracking models (${embedModel})...` });
         try {
           await api.loadPropagation('cuda', embedModel);
           set({ samLoaded: true, propagationLoaded: true, statusMessage: `Tracking models loaded (${embedModel})` });
+          // Sync SAM settings from backend after loading
+          await syncSamSettings();
         } catch (err) {
           set({ statusMessage: 'Failed to load tracking models' });
           throw err;
@@ -192,6 +207,38 @@ export const useUIStore = create<UIState>()(
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
       setAutoNext: (enabled) => set({ autoNext: enabled }),
+
+      // SAM settings - sync with backend
+      setSamMaskThreshold: async (threshold) => {
+        const clamped = Math.max(-2.0, Math.min(2.0, threshold));
+        set({ samMaskThreshold: clamped });
+        try {
+          await api.updateSAMSettings({ mask_threshold: clamped });
+        } catch (err) {
+          console.error('Failed to update SAM mask threshold:', err);
+        }
+      },
+      
+      setSamMultimaskOutput: async (enabled) => {
+        set({ samMultimaskOutput: enabled });
+        try {
+          await api.updateSAMSettings({ multimask_output: enabled });
+        } catch (err) {
+          console.error('Failed to update SAM multimask output:', err);
+        }
+      },
+      
+      syncSamSettings: async () => {
+        try {
+          const settings = await api.getSAMSettings();
+          set({
+            samMaskThreshold: settings.mask_threshold,
+            samMultimaskOutput: settings.multimask_output,
+          });
+        } catch (err) {
+          console.error('Failed to sync SAM settings:', err);
+        }
+      },
 
       setStatusMessage: (message) => set({ statusMessage: message }),
       setIsPropagating: (value) => set({ isPropagating: value }),

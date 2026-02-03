@@ -202,6 +202,22 @@ export async function getSAMStatus(): Promise<{ loaded: boolean }> {
   return response.data;
 }
 
+export interface SAMSettings {
+  mask_threshold: number;
+  multimask_output: boolean;
+  stability_score_offset: number;
+}
+
+export async function getSAMSettings(): Promise<SAMSettings> {
+  const response = await api.get<SAMSettings>('/ml/sam/settings');
+  return response.data;
+}
+
+export async function updateSAMSettings(settings: Partial<SAMSettings>): Promise<SAMSettings> {
+  const response = await api.patch<SAMSettings>('/ml/sam/settings', settings);
+  return response.data;
+}
+
 export async function unloadAllModels(): Promise<{ models: string[] }> {
   const response = await api.post<{ status: string; models: string[] }>('/ml/unload');
   return { models: response.data.models };

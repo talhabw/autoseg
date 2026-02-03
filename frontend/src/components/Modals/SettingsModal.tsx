@@ -43,6 +43,11 @@ export function SettingsModal() {
     setIouVerify,
     iouThreshold,
     setIouThreshold,
+    samMaskThreshold,
+    setSamMaskThreshold,
+    samMultimaskOutput,
+    setSamMultimaskOutput,
+    samLoaded,
   } = useUIStore();
 
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
@@ -135,6 +140,58 @@ export function SettingsModal() {
                 <p className="text-xs text-muted-foreground">
                   Larger models provide better segmentation accuracy but require more GPU memory and inference time.
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* SAM Settings */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+              Segmentation (SAM)
+              <Separator className="flex-1" />
+            </h3>
+
+            <div className="space-y-6 pl-2">
+              {!samLoaded && (
+                <p className="text-xs text-amber-500">
+                  Load the SAM model first to adjust these settings.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Mask Threshold</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {samMaskThreshold.toFixed(2)}
+                  </span>
+                </div>
+                <Slider
+                  min={-200}
+                  max={200}
+                  step={5}
+                  value={[samMaskThreshold * 100]}
+                  onValueChange={(vals) => setSamMaskThreshold(vals[0] / 100)}
+                  disabled={!samLoaded}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Controls mask boundary sensitivity. Lower values = larger masks, higher values = smaller/tighter masks.
+                  Range: -2.0 to 2.0. Default: 0.0
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="multimask-output"
+                  checked={samMultimaskOutput}
+                  onCheckedChange={setSamMultimaskOutput}
+                  disabled={!samLoaded}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="multimask-output">Multi-mask Output</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Generate multiple mask candidates and select the best one. Recommended for ambiguous prompts.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

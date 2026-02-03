@@ -43,6 +43,18 @@ class LoadModelRequest(BaseModel):
     embed_model: str = "vith16"  # DINOv3: vitb16/vitl16/vith16, Pixio: pixio_vitb16/pixio_vitl16/pixio_vith16/pixio_vit1b16
 
 
+class SAMSettingsRequest(BaseModel):
+    mask_threshold: Optional[float] = None  # Range: -2.0 to 2.0
+    multimask_output: Optional[bool] = None
+    stability_score_offset: Optional[float] = None
+
+
+class SAMSettingsResponse(BaseModel):
+    mask_threshold: float
+    multimask_output: bool
+    stability_score_offset: float
+
+
 class SegmentRequest(BaseModel):
     image_id: int
     bbox: list[float]  # [x1, y1, x2, y2]
@@ -123,6 +135,47 @@ async def sam_status():
         return {"loaded": segment_service.is_loaded()}
     except Exception:
         return {"loaded": False}
+
+
+@router.get("/sam/settings", response_model=SAMSettingsResponse)
+async def get_sam_settings():
+    """Get current SAM settings."""
+    segment_service = get_segment_service()
+    settings = segment_service.settings
+    return SAMSettingsResponse(
+        mask_threshold=settings.get("mask_threshold", 0.0),
+        multimask_output=settings.get("multimask_output", True),
+        stability_score_offset=settings.get("stability_score_offset", 1.0),
+    )
+
+
+@router.patch("/sam/settings", response_model=SAMSettingsResponse)
+async def update_sam_settings(request: SAMSettingsRequest):
+    """
+    Update SAM settings for mask generation.
+
+    - mask_threshold: Logit threshold for binary mask conversion (-2.0 to 2.0).
+      Higher values = smaller/more conservative masks. Default: 0.0
+    - multimask_output: Generate multiple mask candidates. Default: true
+    - stability_score_offset: Offset for stability calculation. Default: 1.0
+    """
+    segment_service = get_segment_service()
+
+    updates = {}
+    if request.mask_threshold is not None:
+        # Clamp to reasonable range
+        updates["mask_threshold"] = max(-2.0, min(2.0, request.mask_threshold))
+    if request.multimask_output is not None:
+        updates["multimask_output"] = request.multimask_output
+    if request.stability_score_offset is not None:
+        updates["stability_score_offset"] = request.stability_score_offset
+
+    settings = segment_service.update_settings(**updates)
+    return SAMSettingsResponse(
+        mask_threshold=settings.get("mask_threshold", 0.0),
+        multimask_output=settings.get("multimask_output", True),
+        stability_score_offset=settings.get("stability_score_offset", 1.0),
+    )
 
 
 @router.post("/unload")
