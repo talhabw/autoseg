@@ -212,7 +212,19 @@ function AppContent() {
 
     if (sourceAnnotations.length === 0) {
       // Still no annotations after waiting - truly no annotations on this image
-      console.log(`${logPrefix} ⏸️ No annotations for source image ${currentImg.id} after waiting, staying on current image`);
+      console.log(`${logPrefix} ⏸️ No annotations for source image ${currentImg.id} after waiting`);
+      
+      // If auto-tracking, skip this image and continue to next
+      const { autoNext: shouldAutoNext, trackModeEnabled: isTracking } = useUIStore.getState();
+      if (shouldAutoNext && isTracking && currentIdx < currentImages.length - 1) {
+        console.log(`${logPrefix} 🔁 Auto-tracking: skipping unlabeled image, moving to next`);
+        useUIStore.getState().addToast('Skipping unlabeled image...', 'info', 1000);
+        _pendingAutoNext = true;
+        _propagationLock = false;
+        goNext();
+        return;
+      }
+      
       useUIStore.getState().addToast('No annotations to propagate. Add annotations first.', 'info');
       _propagationLock = false;
       // Don't call goNext() - stay on current image
@@ -346,7 +358,7 @@ function AppContent() {
 
             if (!fallbackResult.found || !fallbackResult.annotation) {
               console.log(`${logPrefix} No fallback found for label ${labelId}`);
-              useUIStore.getState().addToast(`No reference found for label ${labelId}`, 'warning');
+              // Don't spam toasts - summary will show failed count
               continue;
             }
 
