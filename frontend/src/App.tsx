@@ -16,10 +16,40 @@ import * as api from './api/client';
 
 const queryClient = new QueryClient();
 
+// Helper to compute bounding box IoU for client-side duplicate detection
+function bboxIoU(box1: number[], box2: number[]): number {
+  const [x1_1, y1_1, x2_1, y2_1] = box1;
+  const [x1_2, y1_2, x2_2, y2_2] = box2;
+  
+  const xi1 = Math.max(x1_1, x1_2);
+  const yi1 = Math.max(y1_1, y1_2);
+  const xi2 = Math.min(x2_1, x2_2);
+  const yi2 = Math.min(y2_1, y2_2);
+  
+  const interWidth = Math.max(0, xi2 - xi1);
+  const interHeight = Math.max(0, yi2 - yi1);
+  const interArea = interWidth * interHeight;
+  
+  const area1 = (x2_1 - x1_1) * (y2_1 - y1_1);
+  const area2 = (x2_2 - x1_2) * (y2_2 - y1_2);
+  const unionArea = area1 + area2 - interArea;
+  
+  return unionArea > 0 ? interArea / unionArea : 0;
+}
+
 // Module-level state - truly synchronous, survives React re-renders
 let _propagationLock = false;
 let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
+let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
+
+// Export function to stop auto-tracking (used by UI components)
+export function stopAutoTracking() {
+  _pendingAutoNext = false;
+  // Increment request ID to cancel any in-progress propagation
+  _propagationRequestId++;
+  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}`);
+}
 
 function AppContent() {
   const { images, currentImageIndex, project, tryOpenLastProject } = useProjectStore();
@@ -59,7 +89,19 @@ function AppContent() {
   // Load annotations when image changes
   useEffect(() => {
     if (currentImage) {
-      loadAnnotations(currentImage.id);
+      loadAnnotations(currentImage.id).then(() => {
+        // Check if we should continue auto-propagation
+        if (_pendingAutoNext) {
+          _pendingAutoNext = false;
+          const { autoNext, trackModeEnabled } = useUIStore.getState();
+          const { currentImageIndex: idx, images: imgs } = useProjectStore.getState();
+          
+          if (autoNext && trackModeEnabled && idx < imgs.length - 1 && !_propagationLock) {
+            // Small delay to let React render, but much shorter than 500ms
+            setTimeout(() => handlePropagateAndNext(), 50);
+          }
+        }
+      });
     } else {
       clearAnnotations();
     }
@@ -113,8 +155,8 @@ function AppContent() {
         polygon: result.polygon,
       });
 
-      clearPoints();
-      clearPoints();
+      // Don't clear points after refinement - let them accumulate for iterative refinement
+      // User can press Escape to clear manually, or points clear when selecting different annotation
       useUIStore.getState().addToast(`Segmentation complete (score: ${(result.score * 100).toFixed(0)}%)`, 'success');
       useUIStore.getState().setMode('refine');
     } catch (err) {
@@ -149,11 +191,14 @@ function AppContent() {
     _lastPropagationTime = now;
     _propagationRequestId++;
     const currentRequestId = _propagationRequestId;
+    
+    // Set isPropagating immediately so UI shows stop button right away
+    setIsPropagating(true);
 
     console.log(`${logPrefix} ✅ Lock acquired, requestId=${currentRequestId}`);
 
     // Read fresh state from stores to avoid closure issues
-    const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext } = useProjectStore.getState();
+    const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext, project } = useProjectStore.getState();
     const currentImg = currentImages[currentIdx];
 
     console.log(`${logPrefix} State: currentIdx=${currentIdx}, currentImg.id=${currentImg?.id}, imageCount=${currentImages.length}`);
@@ -161,6 +206,7 @@ function AppContent() {
     if (!currentImg || currentIdx >= currentImages.length - 1) {
       console.log(`${logPrefix} ⏭️ At last image or no image, just navigating without propagation`);
       _propagationLock = false;
+      setIsPropagating(false);
       goNext();
       return;
     }
@@ -194,15 +240,31 @@ function AppContent() {
 
     if (sourceAnnotations.length === 0) {
       // Still no annotations after waiting - truly no annotations on this image
-      console.log(`${logPrefix} ⏸️ No annotations for source image ${currentImg.id} after waiting, staying on current image`);
+      console.log(`${logPrefix} ⏸️ No annotations for source image ${currentImg.id} after waiting`);
+      
+      // If auto-tracking, skip this image and continue to next
+      const { autoNext: shouldAutoNext, trackModeEnabled: isTracking } = useUIStore.getState();
+      if (shouldAutoNext && isTracking && currentIdx < currentImages.length - 1) {
+        console.log(`${logPrefix} 🔁 Auto-tracking: skipping unlabeled image, moving to next`);
+        useUIStore.getState().addToast('Skipping unlabeled image...', 'info', 1000);
+        _pendingAutoNext = true;
+        _propagationLock = false;
+        setIsPropagating(false);
+        goNext();
+        return;
+      }
+      
       useUIStore.getState().addToast('No annotations to propagate. Add annotations first.', 'info');
       _propagationLock = false;
+      setIsPropagating(false);
       // Don't call goNext() - stay on current image
       return;
     }
 
-    setIsPropagating(true);
-    console.log(`${logPrefix} isPropagating=true`);
+    // Track which labels failed propagation from previous image
+    const failedLabels = new Set<number>();
+    let successCount = 0;
+    let fallbackCount = 0;
 
     try {
       const { propagationLoaded: propLoaded, loadPropagation: loadProp, setStatusMessage: setStatus } = useUIStore.getState();
@@ -245,23 +307,64 @@ function AppContent() {
           console.log(`${logPrefix} Propagating annotation ${i + 1}/${sourceAnnotations.length} (id=${ann.id})`);
 
           // Get propagation settings from store
-          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK } = useUIStore.getState();
-          const result = await api.propagate(
-            currentImg.id,
-            targetImageId,
-            ann.id,
-            sizeMinRatio,
-            sizeMaxRatio,
-            stopOnSizeMismatch,
-            0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
-            topK
-          );
+          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+          
+          // Use advanced propagation API when mode is not 'peak' or IoU verification is enabled
+          const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
+          
+          let result;
+          if (useAdvancedApi) {
+            result = await api.propagateAdvanced(
+              currentImg.id,
+              targetImageId,
+              ann.id,
+              {
+                mode: propagationMode,
+                iouVerify,
+                iouThreshold,
+                useCachedMasks: true,
+                sizeMinRatio,
+                sizeMaxRatio,
+                stopOnSizeMismatch,
+                topK,
+                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
+              }
+            );
+          } else {
+            result = await api.propagate(
+              currentImg.id,
+              targetImageId,
+              ann.id,
+              sizeMinRatio,
+              sizeMaxRatio,
+              stopOnSizeMismatch,
+              0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
+              topK
+            );
+          }
 
-          // Check if this was a duplicate
+          // Check if this was a duplicate (detected by backend against existing DB annotations)
           if (result.duplicate_skipped) {
             console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
             duplicateSkipCount++;
             continue;  // Don't add to propagationResults
+          }
+
+          // Client-side duplicate check: compare against results already in this batch
+          // This catches duplicates that haven't been saved to DB yet
+          const BBOX_IOU_THRESHOLD = 0.85;  // Use bbox IoU as proxy for mask IoU
+          let isBatchDuplicate = false;
+          for (const existing of propagationResults) {
+            const iou = bboxIoU(result.bbox, existing.bbox);
+            if (iou >= BBOX_IOU_THRESHOLD) {
+              console.log(`${logPrefix} Batch duplicate detected for ann ${ann.id} (bbox IoU=${iou.toFixed(3)}), skipping`);
+              isBatchDuplicate = true;
+              break;
+            }
+          }
+          if (isBatchDuplicate) {
+            duplicateSkipCount++;
+            continue;
           }
 
           if (result.fallback_used) {
@@ -276,12 +379,98 @@ function AppContent() {
             mask_rle: result.mask_rle,
             polygon: result.polygon,
           });
+          successCount++;
         } catch (err: any) {
           console.error(`${logPrefix} Propagation failed for annotation:`, ann.id, err);
-          // Show error in UI
-          const errorMessage = err.response?.data?.detail || 'Propagation failed';
-          useUIStore.getState().addToast(`Error propagating annotation ${ann.id}: ${errorMessage}`, 'error');
+          // Track this label as failed for fallback attempt
+          failedLabels.add(ann.label_id);
         }
+      }
+
+      // Try fallback for failed labels (if we have a project)
+      if (failedLabels.size > 0 && project) {
+        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels...`);
+        setStatus(`Finding fallback references for ${failedLabels.size} labels...`);
+
+        for (const labelId of failedLabels) {
+          try {
+            // Find a fallback reference annotation (approved annotation from earlier images)
+            const fallbackResult = await api.findFallbackReference(
+              labelId,
+              currentIdx + 1, // beforeImageIndex - the target image index
+              project.id
+            );
+
+            if (!fallbackResult.found || !fallbackResult.annotation) {
+              console.log(`${logPrefix} No fallback found for label ${labelId}`);
+              // Don't spam toasts - summary will show failed count
+              continue;
+            }
+
+            console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index}`);
+
+            // Get settings again
+            const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+
+            // Propagate from the fallback reference
+            const result = await api.propagateAdvanced(
+              fallbackResult.annotation.image_id,
+              targetImageId,
+              fallbackResult.annotation.id,
+              {
+                mode: propagationMode,
+                iouVerify,
+                iouThreshold,
+                useCachedMasks: true,
+                sizeMinRatio,
+                sizeMaxRatio,
+                stopOnSizeMismatch,
+                topK,
+                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
+              }
+            );
+
+            if (result.duplicate_skipped) {
+              console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+              duplicateSkipCount++;
+              continue;
+            }
+
+            // Client-side batch duplicate check for fallback results too
+            let isBatchDuplicate = false;
+            for (const existing of propagationResults) {
+              const iou = bboxIoU(result.bbox, existing.bbox);
+              if (iou >= BBOX_IOU_THRESHOLD) {
+                console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
+                isBatchDuplicate = true;
+                break;
+              }
+            }
+            if (isBatchDuplicate) {
+              duplicateSkipCount++;
+              continue;
+            }
+
+            console.log(`${logPrefix} Fallback propagation success for label ${labelId}`);
+            propagationResults.push({
+              label_id: labelId,
+              bbox: result.bbox,
+              mask_rle: result.mask_rle,
+              polygon: result.polygon,
+            });
+            fallbackCount++;
+          } catch (err: any) {
+            console.error(`${logPrefix} Fallback propagation failed for label ${labelId}:`, err);
+            // Don't show toast for each failure - just log it
+            // We'll continue to next image anyway
+          }
+        }
+      }
+
+      // Log summary of failures (but don't stop)
+      const totalFailed = failedLabels.size - fallbackCount;
+      if (totalFailed > 0) {
+        console.log(`${logPrefix} ⚠️ ${totalFailed} labels failed (no fallback found), continuing anyway`);
       }
 
       // Check if request was superseded before creating annotations
@@ -320,21 +509,36 @@ function AppContent() {
 
       // Build summary message
       let message = `Tracked ${propagationResults.length}/${sourceAnnotations.length}`;
+      if (fallbackCount > 0) {
+        message += ` (${fallbackCount} via fallback)`;
+      }
+      if (totalFailed > 0) {
+        message += ` (${totalFailed} failed)`;
+      }
       if (duplicateSkipCount > 0) {
         message += ` (${duplicateSkipCount} duplicate${duplicateSkipCount > 1 ? 's' : ''} skipped)`;
       }
-      useUIStore.getState().addToast(message, 'success');
+      useUIStore.getState().addToast(message, propagationResults.length > 0 ? 'success' : 'warning');
 
       // Navigate to next image - this will trigger loadAnnotations for the new image
       const prevIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} 🚀 Navigating: currentIdx BEFORE nextImage() = ${prevIdx}`);
 
+      // Set auto-next flag before navigation if enabled
+      const { autoNext: shouldAutoNext } = useUIStore.getState();
+      if (shouldAutoNext && prevIdx + 1 < currentImages.length) {
+        console.log(`${logPrefix} 🔁 Auto-next enabled, setting pending flag`);
+        _pendingAutoNext = true;
+      }
+
       useProjectStore.getState().nextImage();
 
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
-
-      // Auto-clear logic removed as Toast handles it
+    } catch (err) {
+      // Clear pending flag on error to prevent unwanted auto-propagation
+      _pendingAutoNext = false;
+      throw err;
     } finally {
       console.log(`${logPrefix} 🔓 Releasing lock, isPropagating=false`);
       setIsPropagating(false);
@@ -387,6 +591,37 @@ function AppContent() {
     }
   }, []);
 
+  // Jump to next unlabeled image (no annotations at all)
+  const handleNextUnlabeled = useCallback(async () => {
+    try {
+      const { project } = useProjectStore.getState();
+      if (!project) {
+        useUIStore.getState().addToast('No project open', 'warning');
+        return;
+      }
+
+      const result = await api.findImagesMissingAnnotations(project.id);
+      if (result.image_indices.length === 0) {
+        useUIStore.getState().addToast('All images have annotations!', 'success');
+        return;
+      }
+
+      // Find next unlabeled image after current index
+      const currentIdx = useProjectStore.getState().currentImageIndex;
+      const nextIdx = result.image_indices.find(idx => idx > currentIdx);
+      if (nextIdx !== undefined) {
+        useProjectStore.getState().setCurrentImageIndex(nextIdx);
+        useUIStore.getState().addToast(`Jumped to image ${nextIdx + 1} (unlabeled) - ${result.total_missing} total`, 'info', 2000);
+      } else {
+        // Wrap around to first unlabeled
+        useProjectStore.getState().setCurrentImageIndex(result.image_indices[0]);
+        useUIStore.getState().addToast(`Wrapped to image ${result.image_indices[0] + 1} (unlabeled) - ${result.total_missing} total`, 'info', 2000);
+      }
+    } catch (err) {
+      console.error('Failed to get unlabeled images:', err);
+    }
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -430,11 +665,36 @@ function AppContent() {
           setModeAction('refine');
           break;
         case 't':
-          // When enabling track mode, auto-load models if not loaded
-          if (!trackEnabled && !propLoaded) {
-            loadProp().then(() => setTrack(true));
+          if (e.shiftKey) {
+            // Shift+T: Toggle auto-tracking (only when track mode is on)
+            if (trackEnabled) {
+              const { autoNext: currentAutoNext, setAutoNext: setAuto } = useUIStore.getState();
+              if (currentAutoNext) {
+                // Stop auto-tracking - also cancels in-progress propagation
+                stopAutoTracking();
+                setAuto(false);
+                useUIStore.getState().addToast('Auto-tracking stopped', 'info', 1500);
+              } else {
+                setAuto(true);
+                useUIStore.getState().addToast('Auto-tracking enabled', 'success', 1500);
+              }
+            } else {
+              useUIStore.getState().addToast('Enable track mode first (T)', 'warning', 1500);
+            }
           } else {
-            setTrack(!trackEnabled);
+            // T: Toggle track mode on/off
+            if (!trackEnabled) {
+              if (!propLoaded) {
+                loadProp().then(() => setTrack(true));
+              } else {
+                setTrack(true);
+              }
+            } else {
+              // Turn off track mode (also disables auto-next and cancels in-progress)
+              stopAutoTracking();
+              useUIStore.getState().setAutoNext(false);
+              setTrack(false);
+            }
           }
           break;
         case 'q':
@@ -458,6 +718,10 @@ function AppContent() {
           // Jump to next pending image
           handleNextPending();
           break;
+        case '[':
+          // Jump to next unlabeled image (no annotations)
+          handleNextUnlabeled();
+          break;
         case 's':
           if (currentMode === 'refine' || selectedAnn) {
             handleSegment();
@@ -469,6 +733,12 @@ function AppContent() {
           }
           break;
         case 'escape':
+          // Stop auto-tracking if in progress, otherwise clear points
+          if (useUIStore.getState().autoNext) {
+            stopAutoTracking();
+            useUIStore.getState().setAutoNext(false);
+            useUIStore.getState().addToast('Auto-tracking cancelled', 'info', 1500);
+          }
           clearPoints();
           break;
         case 'delete':

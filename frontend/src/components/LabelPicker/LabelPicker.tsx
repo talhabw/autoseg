@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useAnnotationStore } from '../../stores/annotationStore';
 import { Button } from "@/components/ui/button";
 import {
@@ -17,9 +17,44 @@ import {
 } from "@/components/ui/command";
 import { Plus, Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Label } from '../../types';
+
+// Color swatch component for editing label colors
+function ColorSwatch({ label, onColorChange }: { label: Label; onColorChange: (labelId: number, color: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    inputRef.current?.click();
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onColorChange(label.id, e.target.value);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={handleClick}
+        className="w-3 h-3 rounded-full flex-shrink-0 mr-2 cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-primary transition-all"
+        style={{ backgroundColor: label.color }}
+        title="Click to change color"
+      />
+      <input
+        ref={inputRef}
+        type="color"
+        value={label.color}
+        onChange={handleChange}
+        className="absolute opacity-0 w-0 h-0"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
 
 export function LabelPicker() {
-  const { labels, selectedLabelId, selectLabel, createLabel } = useAnnotationStore();
+  const { labels, selectedLabelId, selectLabel, createLabel, updateLabel } = useAnnotationStore();
   const [open, setOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -45,6 +80,14 @@ export function LabelPicker() {
       setIsCreating(false);
     }
   }, [searchValue, isCreating, createLabel]);
+
+  const handleColorChange = useCallback(async (labelId: number, color: string) => {
+    try {
+      await updateLabel(labelId, { color });
+    } catch (err) {
+      console.error('Failed to update label color:', err);
+    }
+  }, [updateLabel]);
 
   // Handle key down on the command input
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -121,10 +164,7 @@ export function LabelPicker() {
                       selectedLabelId === label.id ? "opacity-100" : "opacity-0"
                     )}
                   />
-                  <span
-                    className="w-3 h-3 rounded-full flex-shrink-0 mr-2"
-                    style={{ backgroundColor: label.color }}
-                  />
+                  <ColorSwatch label={label} onColorChange={handleColorChange} />
                   {label.name}
                 </CommandItem>
               ))}

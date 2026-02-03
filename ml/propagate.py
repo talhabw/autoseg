@@ -1,12 +1,23 @@
 """
 Propagation module - Track objects across frames using embeddings + SAM.
+
+Supports two propagation modes:
+1. Peak-based (default): Find similarity peaks, prompt SAM at those locations
+2. Dense (legacy-style): Use dense patch correspondence to propagate mask probabilities
 """
+
+from __future__ import annotations
 
 import numpy as np
 import torch
-from typing import Optional
+import torch.nn.functional as F
+from typing import Optional, Literal, TYPE_CHECKING
 from dataclasses import dataclass
 import logging
+
+if TYPE_CHECKING:
+    from ml.embed import EmbedService
+    from ml.segment import SegmentService
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +29,19 @@ class BboxCandidate:
     bbox_xyxy: list[float]
     score: float
     source: str = "propagated"
+
+
+@dataclass
+class PropagationResult:
+    """Result of a propagation attempt."""
+
+    bbox: list[float]
+    mask: np.ndarray
+    confidence: float
+    fallback_used: bool
+    area_ratio: float
+    method: str  # "peak", "dense", or "iou_match"
+    iou_score: Optional[float] = None  # IoU with dense prediction (if verified)
 
 
 class PropagationError(Exception):
@@ -177,9 +201,6 @@ def score_candidates(
     Returns:
         List of BboxCandidate sorted by score (highest first)
     """
-    import torch
-    import torch.nn.functional as F
-
     num_patches_h = embed_service._img_size // embed_service._patch_size
     num_patches_w = embed_service._img_size // embed_service._patch_size
 
@@ -286,6 +307,10 @@ class PropagateService:
     - DINOv3 embeddings for object matching
     - Candidate bbox generation
     - SAM for mask refinement
+
+    Supports two modes:
+    - "peak" (default): Find similarity peaks, prompt SAM
+    - "dense": Legacy-style dense correspondence for mask propagation
     """
 
     def __init__(
@@ -307,6 +332,330 @@ class PropagateService:
         """Clear references (actual unload happens in embed/segment services)."""
         self.embed_service = None
         self.segment_service = None
+
+    def propagate_dense(
+        self,
+        source_mask: np.ndarray,
+        source_features: torch.Tensor,
+        target_features: torch.Tensor,
+        top_k: int = 5,
+        temperature: float = 0.2,
+    ) -> np.ndarray:
+        """
+        Propagate mask using dense feature correspondence (legacy DINO approach).
+
+        This computes patch-to-patch similarities and uses them to propagate
+        mask probabilities from source to target, producing a coarse mask
+        prediction without requiring SAM.
+
+        Args:
+            source_mask: Binary mask from source image (H, W)
+            source_features: Source image features (1, num_patches, embed_dim)
+            target_features: Target image features (1, num_patches, embed_dim)
+            top_k: Number of top matches to consider per target patch
+            temperature: Softmax temperature (lower = sharper matching)
+
+        Returns:
+            Probability map for target image (num_patches_h, num_patches_w)
+        """
+        # Get patch dimensions
+        num_patches = self.embed_service._img_size // self.embed_service._patch_size
+        embed_dim = source_features.shape[-1]
+
+        # Reshape features to spatial layout: (H, W, D)
+        source_feats = source_features.squeeze(0).reshape(
+            num_patches, num_patches, embed_dim
+        )
+        target_feats = target_features.squeeze(0).reshape(
+            num_patches, num_patches, embed_dim
+        )
+
+        # Resize mask to patch resolution
+        source_mask_resized = torch.from_numpy(source_mask).float()
+        source_mask_resized = F.interpolate(
+            source_mask_resized.unsqueeze(0).unsqueeze(0),
+            size=(num_patches, num_patches),
+            mode="nearest",
+        ).squeeze()
+
+        # Create one-hot encoding (background=0, foreground=1)
+        # Shape: (H, W, 2) where [..., 0] = background prob, [..., 1] = foreground prob
+        source_probs = torch.zeros(
+            num_patches, num_patches, 2, device=source_feats.device
+        )
+        source_probs[..., 0] = 1 - source_mask_resized.to(source_feats.device)
+        source_probs[..., 1] = source_mask_resized.to(source_feats.device)
+
+        # Compute dot product similarity between all target and source patches
+        # target_feats: (Ht, Wt, D), source_feats: (Hs, Ws, D)
+        # Result: (Ht, Wt, Hs, Ws) - similarity of each target patch to each source patch
+        dot = torch.einsum("ijd,uvd->ijuv", target_feats, source_feats)
+
+        # Flatten spatial dimensions for top-k selection
+        # Shape: (Ht*Wt, Hs*Ws)
+        dot_flat = dot.flatten(0, 1).flatten(1, 2)
+
+        # Top-k filtering: keep only top-k matches per target patch
+        k_th_values = torch.topk(dot_flat, dim=1, k=top_k).values[:, -1:]
+        dot_flat = torch.where(
+            dot_flat >= k_th_values,
+            dot_flat,
+            torch.tensor(-torch.inf, device=dot_flat.device),
+        )
+
+        # Softmax to get attention weights
+        weights = F.softmax(dot_flat / temperature, dim=1)
+
+        # Propagate mask probabilities: weighted sum of source probs
+        # weights: (Ht*Wt, Hs*Ws), source_probs: (Hs, Ws, 2) -> (Hs*Ws, 2)
+        source_probs_flat = source_probs.flatten(0, 1)  # (Hs*Ws, 2)
+        target_probs = torch.mm(weights, source_probs_flat)  # (Ht*Wt, 2)
+
+        # Normalize probabilities
+        target_probs = target_probs / (target_probs.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Reshape to spatial and extract foreground probability
+        target_probs = target_probs.reshape(num_patches, num_patches, 2)
+        foreground_probs = target_probs[..., 1].cpu().numpy()
+
+        return foreground_probs
+
+    def propagate_with_dense_fallback(
+        self,
+        source_image: np.ndarray,
+        source_bbox: list[float],
+        source_mask: Optional[np.ndarray],
+        target_image: np.ndarray,
+        source_image_id: Optional[str] = None,
+        target_image_id: Optional[str] = None,
+        annotation_id: Optional[int] = None,
+        mode: Literal["peak", "dense", "auto"] = "auto",
+        iou_verify: bool = True,
+        iou_threshold: float = 0.3,
+        use_cached_masks: bool = True,
+        **kwargs,
+    ) -> Optional[PropagationResult]:
+        """
+        Propagate annotation with optional dense fallback and IoU verification.
+
+        Modes:
+        - "peak": Use peak-based propagation only (current default behavior)
+        - "dense": Use dense propagation to create coarse mask, then refine with SAM
+        - "auto": Try peak first, fall back to dense if it fails
+
+        IoU verification (when enabled):
+        - Computes dense propagation mask as "ground truth"
+        - Verifies SAM result has sufficient IoU with dense prediction
+        - Rejects results with low IoU
+
+        Args:
+            source_image: Source image (RGB numpy array)
+            source_bbox: Source bbox [x1, y1, x2, y2]
+            source_mask: Source mask (required for dense mode)
+            target_image: Target image (RGB numpy array)
+            source_image_id: ID for caching source features
+            target_image_id: ID for caching target features
+            annotation_id: Annotation ID for caching
+            mode: Propagation mode ("peak", "dense", or "auto")
+            iou_verify: Whether to verify results against dense prediction
+            iou_threshold: Minimum IoU with dense prediction to accept
+            use_cached_masks: Whether to use/check SAM everything cache
+            **kwargs: Additional arguments passed to propagate_annotation
+
+        Returns:
+            PropagationResult or None if propagation fails
+        """
+        from core.masks import mask_iou
+
+        img_h, img_w = target_image.shape[:2]
+
+        # Get features for both images
+        source_features = self.embed_service.get_image_features(
+            source_image, image_id=source_image_id
+        )
+        target_features = self.embed_service.get_image_features(
+            target_image, image_id=target_image_id
+        )
+
+        # Compute dense mask prediction if needed for dense mode or IoU verification
+        dense_mask = None
+        if source_mask is not None and (mode in ["dense", "auto"] or iou_verify):
+            dense_probs = self.propagate_dense(
+                source_mask, source_features, target_features
+            )
+            # Upsample to image resolution
+            dense_probs_tensor = torch.from_numpy(dense_probs).unsqueeze(0).unsqueeze(0)
+            dense_probs_upsampled = (
+                F.interpolate(
+                    dense_probs_tensor,
+                    size=(img_h, img_w),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                .squeeze()
+                .numpy()
+            )
+            dense_mask = (dense_probs_upsampled > 0.5).astype(np.uint8)
+
+            logger.debug(f"Dense mask area: {dense_mask.sum()}")
+
+        # Calculate source area for size checking
+        source_area = (source_bbox[2] - source_bbox[0]) * (
+            source_bbox[3] - source_bbox[1]
+        )
+
+        result = None
+        method_used = None
+
+        # Try peak-based propagation first (unless mode is "dense")
+        if mode in ["peak", "auto"]:
+            try:
+                peak_result = self.propagate_annotation(
+                    source_image=source_image,
+                    source_bbox=source_bbox,
+                    source_mask=source_mask,
+                    target_image=target_image,
+                    source_image_id=source_image_id,
+                    target_image_id=target_image_id,
+                    annotation_id=annotation_id,
+                    **kwargs,
+                )
+                if peak_result:
+                    bbox, mask, confidence, fallback_used, area_ratio = peak_result
+
+                    # IoU verification against dense prediction
+                    iou_score = None
+                    if iou_verify and dense_mask is not None:
+                        iou_score = mask_iou(mask, dense_mask)
+                        logger.debug(f"Peak result IoU with dense: {iou_score:.3f}")
+
+                        if iou_score < iou_threshold:
+                            logger.info(
+                                f"Peak result rejected: IoU {iou_score:.3f} < {iou_threshold}"
+                            )
+                            # Don't use this result
+                        else:
+                            result = PropagationResult(
+                                bbox=bbox,
+                                mask=mask,
+                                confidence=confidence,
+                                fallback_used=fallback_used,
+                                area_ratio=area_ratio,
+                                method="peak",
+                                iou_score=iou_score,
+                            )
+                            method_used = "peak"
+                    else:
+                        result = PropagationResult(
+                            bbox=bbox,
+                            mask=mask,
+                            confidence=confidence,
+                            fallback_used=fallback_used,
+                            area_ratio=area_ratio,
+                            method="peak",
+                            iou_score=None,
+                        )
+                        method_used = "peak"
+            except (PropagationSizeMismatchError, PropagationNotFoundError) as e:
+                logger.info(f"Peak propagation failed: {e}")
+                if mode == "peak":
+                    raise
+
+        # Try dense + cached mask matching (if peak failed or mode is dense)
+        if result is None and mode in ["dense", "auto"] and dense_mask is not None:
+            logger.info("Attempting dense propagation with SAM mask matching...")
+
+            # Option 1: Use cached "everything" masks if available
+            if use_cached_masks:
+                cached_match = self.segment_service.find_best_mask_by_iou(
+                    target_image_id, dense_mask, min_iou=iou_threshold
+                )
+                if cached_match:
+                    matched_mask, iou_score = cached_match
+                    bbox = matched_mask.bbox
+                    area_ratio = (
+                        matched_mask.area / source_area if source_area > 0 else 1.0
+                    )
+
+                    result = PropagationResult(
+                        bbox=bbox,
+                        mask=matched_mask.mask,
+                        confidence=float(matched_mask.score),
+                        fallback_used=True,
+                        area_ratio=area_ratio,
+                        method="iou_match",
+                        iou_score=iou_score,
+                    )
+                    method_used = "iou_match"
+                    logger.info(f"Used cached mask match: IoU={iou_score:.3f}")
+
+            # Option 2: Use dense mask center to prompt SAM
+            if result is None:
+                # Find center of dense mask
+                rows, cols = np.where(dense_mask > 0)
+                if len(rows) > 0:
+                    center_y = int(np.mean(rows))
+                    center_x = int(np.mean(cols))
+
+                    # Set image for SAM
+                    self.segment_service.set_image(target_image, target_image_id)
+
+                    try:
+                        mask, sam_score, bbox = self.segment_service.segment_with_point(
+                            center_x, center_y
+                        )
+
+                        # Verify IoU
+                        iou_score = mask_iou(mask, dense_mask)
+                        if iou_score >= iou_threshold:
+                            area_ratio = (
+                                mask.sum() / source_area if source_area > 0 else 1.0
+                            )
+
+                            # Get descriptor similarity for confidence
+                            source_desc = self.embed_service.get_object_descriptor(
+                                source_image,
+                                source_bbox,
+                                mask=source_mask,
+                                image_id=source_image_id,
+                                annotation_id=annotation_id,
+                            )
+                            target_desc = self.embed_service.get_object_descriptor(
+                                target_image, bbox, mask=mask, image_id=target_image_id
+                            )
+                            embed_sim = self.embed_service.compute_similarity(
+                                source_desc, target_desc
+                            )
+
+                            confidence = (
+                                0.5 * embed_sim + 0.3 * sam_score + 0.2 * iou_score
+                            )
+
+                            result = PropagationResult(
+                                bbox=bbox,
+                                mask=mask,
+                                confidence=confidence,
+                                fallback_used=True,
+                                area_ratio=area_ratio,
+                                method="dense",
+                                iou_score=iou_score,
+                            )
+                            method_used = "dense"
+                            logger.info(
+                                f"Dense propagation succeeded: IoU={iou_score:.3f}, sim={embed_sim:.3f}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Dense SAM result rejected: IoU {iou_score:.3f} < {iou_threshold}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Dense SAM prompting failed: {e}")
+
+        if result:
+            logger.info(f"Propagation succeeded using method: {method_used}")
+            return result
+
+        raise PropagationNotFoundError("All propagation methods failed")
 
     def propagate_annotation(
         self,
@@ -509,7 +858,7 @@ class PropagateService:
                 logger.warning(f"SAM failed for peak point: {e}")
                 continue
         # Log all candidates for debugging
-        logger.info(f"=== Propagation candidates summary ===")
+        logger.info("=== Propagation candidates summary ===")
         logger.info(f"Size-acceptable results ({len(size_acceptable_results)}):")
         for i, (bbox, _, conf, sim, ratio) in enumerate(size_acceptable_results):
             logger.info(
@@ -521,7 +870,7 @@ class PropagateService:
             logger.info(
                 f"  {i + 1}. sim={sim:.3f}, ratio={ratio:.2f}, conf={conf:.3f}, bbox={[int(x) for x in bbox]}{marker}"
             )
-        logger.info(f"======================================")
+        logger.info("======================================")
 
         # Select best result
         if size_acceptable_results:
@@ -629,7 +978,7 @@ class PropagateService:
                 logger.info(f"Propagation stopped at frame {target_idx}: no result")
                 break
 
-            new_bbox, new_mask, confidence = result
+            new_bbox, new_mask, confidence, _, _ = result  # Unpack all 5 elements
 
             if confidence < stop_threshold:
                 logger.info(
@@ -651,4 +1000,266 @@ class PropagateService:
             current_bbox = new_bbox
             current_mask = new_mask
 
+        return results
+
+    def find_all_instances(
+        self,
+        reference_image: np.ndarray,
+        reference_bbox: list[float],
+        reference_mask: Optional[np.ndarray],
+        target_image: np.ndarray,
+        reference_image_id: Optional[str] = None,
+        target_image_id: Optional[str] = None,
+        annotation_id: Optional[int] = None,
+        min_similarity: float = 0.6,
+        max_instances: int = 20,
+        min_iou_between_instances: float = 0.0,
+        max_iou_between_instances: float = 0.5,
+        use_cached_masks: bool = True,
+        size_tolerance: float = 0.5,
+    ) -> list[PropagationResult]:
+        """
+        Find ALL instances of a class in the target image.
+
+        Uses the reference annotation to define what the class looks like,
+        then finds all similar objects in the target image.
+
+        This is useful for:
+        - Per-class auto-labeling (like legacy FastSAM everything mode)
+        - Finding multiple instances of the same object type
+        - Semi-automatic annotation of repeated objects
+
+        Args:
+            reference_image: Reference image with known instance
+            reference_bbox: Bbox of reference instance [x1, y1, x2, y2]
+            reference_mask: Mask of reference instance (optional but recommended)
+            target_image: Image to search for instances
+            reference_image_id: ID for caching reference features
+            target_image_id: ID for caching target features
+            annotation_id: Annotation ID for caching
+            min_similarity: Minimum embedding similarity to consider a match
+            max_instances: Maximum number of instances to return
+            min_iou_between_instances: Min IoU between instances (for overlapping objects)
+            max_iou_between_instances: Max IoU between instances (to avoid duplicates)
+            use_cached_masks: Whether to use SAM everything cache
+            size_tolerance: How much size can vary from reference (0.5 = 50%-200%)
+
+        Returns:
+            List of PropagationResult for each found instance
+        """
+        from core.masks import mask_iou
+
+        img_h, img_w = target_image.shape[:2]
+        results = []
+
+        # Calculate reference area for size filtering
+        # size_tolerance=0.5 means 50%-200% of reference size (multiplicative)
+        ref_area = (reference_bbox[2] - reference_bbox[0]) * (
+            reference_bbox[3] - reference_bbox[1]
+        )
+        min_area = ref_area / (1 + size_tolerance)
+        max_area = ref_area * (1 + size_tolerance)
+
+        # Get reference descriptor
+        ref_descriptor = self.embed_service.get_object_descriptor(
+            reference_image,
+            reference_bbox,
+            mask=reference_mask,
+            image_id=reference_image_id,
+            annotation_id=annotation_id,
+        )
+
+        # Get target features
+        target_features = self.embed_service.get_image_features(
+            target_image, image_id=target_image_id
+        )
+
+        # Compute similarity map
+        num_patches = self.embed_service._img_size // self.embed_service._patch_size
+        feats = target_features.squeeze(0)  # (num_patches^2, embed_dim)
+        feats = F.normalize(feats, dim=-1)
+
+        desc_tensor = torch.from_numpy(ref_descriptor).to(feats.device).float()
+        similarity = torch.mv(feats, desc_tensor)
+        similarity_map = similarity.reshape(num_patches, num_patches).cpu().numpy()
+
+        # Set target image for SAM
+        self.segment_service.set_image(target_image, target_image_id)
+
+        # Strategy 1: Use cached masks if available
+        if use_cached_masks:
+            cached_masks = self.segment_service.get_cached_masks(target_image_id)
+            if cached_masks is None:
+                # Run segment everything to populate cache
+                logger.info("Running segment_everything to find all masks...")
+                cached_masks = self.segment_service.segment_everything(
+                    target_image, target_image_id
+                )
+
+            if cached_masks:
+                logger.info(
+                    f"Evaluating {len(cached_masks)} cached masks for class matching..."
+                )
+
+                # Score each cached mask by its average similarity
+                scored_masks = []
+                for cached_mask in cached_masks:
+                    # Check size constraint
+                    if not (min_area <= cached_mask.area <= max_area):
+                        continue
+
+                    # Get mask's position in patch coords
+                    bbox = cached_mask.bbox
+                    cx = (bbox[0] + bbox[2]) / 2
+                    cy = (bbox[1] + bbox[3]) / 2
+                    px = int(cx / img_w * num_patches)
+                    py = int(cy / img_h * num_patches)
+                    px = min(max(px, 0), num_patches - 1)
+                    py = min(max(py, 0), num_patches - 1)
+
+                    # Get similarity at center
+                    center_sim = float(similarity_map[py, px])
+
+                    # Also compute descriptor similarity
+                    mask_desc = self.embed_service.get_object_descriptor(
+                        target_image,
+                        bbox,
+                        mask=cached_mask.mask,
+                        image_id=target_image_id,
+                    )
+                    desc_sim = self.embed_service.compute_similarity(
+                        ref_descriptor, mask_desc
+                    )
+
+                    # Combined score
+                    score = 0.5 * center_sim + 0.5 * desc_sim
+
+                    if score >= min_similarity:
+                        scored_masks.append((cached_mask, score, desc_sim))
+
+                # Sort by score (highest first)
+                scored_masks.sort(key=lambda x: x[1], reverse=True)
+
+                # Apply NMS to avoid duplicates
+                for cached_mask, score, desc_sim in scored_masks:
+                    if len(results) >= max_instances:
+                        break
+
+                    # Check IoU with existing results
+                    is_duplicate = False
+                    for existing in results:
+                        iou = mask_iou(cached_mask.mask, existing.mask)
+                        if iou > max_iou_between_instances:
+                            is_duplicate = True
+                            break
+                        if iou > 0 and iou < min_iou_between_instances:
+                            # Too much overlap but not enough - probably not the same instance
+                            continue
+
+                    if not is_duplicate:
+                        area_ratio = (
+                            cached_mask.area / ref_area if ref_area > 0 else 1.0
+                        )
+                        results.append(
+                            PropagationResult(
+                                bbox=cached_mask.bbox,
+                                mask=cached_mask.mask,
+                                confidence=score,
+                                fallback_used=False,
+                                area_ratio=area_ratio,
+                                method="class_match",
+                                iou_score=None,
+                            )
+                        )
+
+                logger.info(f"Found {len(results)} instances via cached mask matching")
+
+        # Strategy 2: Find peaks in similarity map and prompt SAM
+        if len(results) < max_instances:
+            logger.info("Finding additional instances via similarity peaks...")
+
+            # Find peaks above threshold
+            flat_sim = similarity_map.flatten()
+            peak_indices = np.argsort(flat_sim)[::-1]
+
+            tried_points = []
+            for peak_idx in peak_indices:
+                if len(results) >= max_instances:
+                    break
+
+                peak_sim = flat_sim[peak_idx]
+                if peak_sim < min_similarity:
+                    break
+
+                py, px = divmod(peak_idx, num_patches)
+                point_x = (px + 0.5) / num_patches * img_w
+                point_y = (py + 0.5) / num_patches * img_h
+
+                # Skip if too close to already tried points
+                too_close = False
+                for tx, ty in tried_points:
+                    if (
+                        abs(point_x - tx) < img_w * 0.05
+                        and abs(point_y - ty) < img_h * 0.05
+                    ):
+                        too_close = True
+                        break
+                if too_close:
+                    continue
+
+                tried_points.append((point_x, point_y))
+
+                try:
+                    mask, sam_score, bbox = self.segment_service.segment_with_point(
+                        point_x, point_y
+                    )
+
+                    # Check size constraint
+                    mask_area = mask.sum()
+                    if not (min_area <= mask_area <= max_area):
+                        continue
+
+                    # Verify with descriptor
+                    mask_desc = self.embed_service.get_object_descriptor(
+                        target_image, bbox, mask=mask, image_id=target_image_id
+                    )
+                    desc_sim = self.embed_service.compute_similarity(
+                        ref_descriptor, mask_desc
+                    )
+
+                    if desc_sim < min_similarity:
+                        continue
+
+                    # Check IoU with existing results
+                    is_duplicate = False
+                    for existing in results:
+                        iou = mask_iou(mask, existing.mask)
+                        if iou > max_iou_between_instances:
+                            is_duplicate = True
+                            break
+
+                    if not is_duplicate:
+                        confidence = 0.5 * desc_sim + 0.5 * sam_score
+                        area_ratio = mask_area / ref_area if ref_area > 0 else 1.0
+
+                        results.append(
+                            PropagationResult(
+                                bbox=bbox,
+                                mask=mask,
+                                confidence=confidence,
+                                fallback_used=False,
+                                area_ratio=area_ratio,
+                                method="peak_match",
+                                iou_score=None,
+                            )
+                        )
+
+                except Exception as e:
+                    logger.debug(f"Peak point failed: {e}")
+                    continue
+
+        # Sort results by confidence
+        results.sort(key=lambda r: r.confidence, reverse=True)
+
+        logger.info(f"find_all_instances complete: found {len(results)} instances")
         return results

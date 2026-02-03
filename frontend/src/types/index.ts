@@ -69,3 +69,38 @@ export interface DrawingBbox {
   x2: number;
   y2: number;
 }
+
+// ==================== Advanced ML Types ====================
+
+// Instance found by find-all-instances
+export interface FoundInstance {
+  bbox: [number, number, number, number];
+  mask_rle: object;
+  polygon: number[];
+  confidence: number;
+  method: string;
+  area_ratio?: number;
+}
+
+// Response from find-all-instances endpoint
+export interface FindAllInstancesResult {
+  instances: FoundInstance[];
+  count: number;
+}
+
+// Advanced propagation result with method tracking
+export interface PropagateAdvancedResult {
+  bbox: [number, number, number, number];
+  mask_rle: object;
+  polygon: number[];
+  confidence: number;
+  fallback_used: boolean;
+  area_ratio: number;
+  method: 'peak' | 'dense' | 'iou_match';
+  iou_score: number | null;
+  duplicate_skipped?: boolean;
+  duplicate_iou?: number;
+}
+
+// Propagation mode for advanced propagation
+export type PropagationMode = 'peak' | 'dense' | 'auto';

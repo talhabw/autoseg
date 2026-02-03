@@ -37,6 +37,7 @@ interface AnnotationState {
   selectAnnotation: (annotationId: number | null) => void;
   selectLabel: (labelId: number | null) => void;
   createLabel: (name: string, color?: string) => Promise<Label>;
+  updateLabel: (labelId: number, data: { name?: string; color?: string }) => Promise<void>;
   
   // Refine points
   addRefinePoint: (point: RefinePoint) => void;
@@ -123,6 +124,13 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
       selectedLabelId: label.id,
     }));
     return label;
+  },
+
+  updateLabel: async (labelId, data) => {
+    const updated = await api.updateLabel(labelId, data);
+    set((state) => ({
+      labels: state.labels.map((l) => (l.id === labelId ? updated : l)),
+    }));
   },
 
   addRefinePoint: (point) => {

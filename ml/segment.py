@@ -32,6 +32,44 @@ class SegmentService:
         self._image_state = None
         self._current_image_id = None
 
+        # SAM settings - tunable parameters for mask generation
+        self._settings = {
+            "mask_threshold": 0.0,  # Logit threshold for binary mask (higher = more conservative)
+            "multimask_output": True,  # Generate multiple mask candidates
+            "stability_score_offset": 1.0,  # Offset for stability score calculation
+            "min_region_area": 1200,  # Minimum area in pixels to keep (removes small islands)
+            "keep_largest_region": True,  # Always keep the largest connected region
+        }
+
+    @property
+    def settings(self) -> dict:
+        """Get current SAM settings."""
+        return self._settings.copy()
+
+    def update_settings(self, **kwargs) -> dict:
+        """
+        Update SAM settings.
+
+        Args:
+            mask_threshold: Logit threshold for binary mask conversion (default 0.0)
+                           Range: -2.0 to 2.0. Higher = smaller/more conservative masks.
+            multimask_output: Generate multiple mask candidates (default True)
+            stability_score_offset: Offset for stability calculation (default 1.0)
+            min_region_area: Minimum area in pixels to keep a region (default 100)
+                            Smaller regions are removed as noise.
+            keep_largest_region: Always keep the largest connected region (default True)
+
+        Returns:
+            Updated settings dict
+        """
+        for key, value in kwargs.items():
+            if key in self._settings:
+                self._settings[key] = value
+                logger.info(f"SAM setting updated: {key}={value}")
+            else:
+                logger.warning(f"Unknown SAM setting: {key}")
+        return self._settings.copy()
+
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self.model is not None and self._processor is not None
@@ -214,8 +252,20 @@ class SegmentService:
         if len(mask.shape) > 2:
             mask = mask.squeeze()
 
-        # Convert to binary uint8
-        mask = (mask > 0.5).astype(np.uint8)
+        # Convert to binary uint8 using configurable threshold
+        # For logits, 0.0 threshold is typical; for probabilities, 0.5
+        mask_threshold = self._settings.get("mask_threshold", 0.0)
+        mask = (mask > mask_threshold).astype(np.uint8)
+
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
 
         # Compute refined bbox from mask
         from core.masks import mask_to_bbox
@@ -294,8 +344,19 @@ class SegmentService:
         if len(mask.shape) > 2:
             mask = mask.squeeze()
 
-        # Convert to binary uint8
-        mask = (mask > 0.5).astype(np.uint8)
+        # Convert to binary uint8 using configurable threshold
+        mask_threshold = self._settings.get("mask_threshold", 0.0)
+        mask = (mask > mask_threshold).astype(np.uint8)
+
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
 
         # Get bbox from mask
         from core.masks import mask_to_bbox
@@ -357,8 +418,19 @@ class SegmentService:
         if len(mask.shape) > 2:
             mask = mask.squeeze()
 
-        # Convert to binary uint8
-        mask = (mask > 0.5).astype(np.uint8)
+        # Convert to binary uint8 using configurable threshold
+        mask_threshold = self._settings.get("mask_threshold", 0.0)
+        mask = (mask > mask_threshold).astype(np.uint8)
+
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
 
         # Get bbox from mask
         from core.masks import mask_to_bbox

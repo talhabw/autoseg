@@ -1,6 +1,7 @@
 
 import { useUIStore } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { stopAutoTracking } from '../../App';
 
 
 import type { InteractionMode } from '../../types';
@@ -12,11 +13,13 @@ import {
   MousePointer2,
   Sparkles,
   Activity,
+  Square,
   CheckCircle2,
   Settings,
   FilePlus,
   FolderOpen,
-  Download
+  Download,
+  FastForward,
 } from 'lucide-react';
 
 export function Header() {
@@ -38,6 +41,8 @@ export function Header() {
     setShowExportModal,
     setShowSettingsModal,
     setStatusMessage,
+    autoNext,
+    setAutoNext,
   } = useUIStore();
 
   const { project } = useProjectStore();
@@ -145,6 +150,35 @@ export function Header() {
           <span className="hidden sm:inline">{isPropagating ? 'Tracking' : 'Track'}</span>
           <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(T)</span>
         </Button>
+
+        {/* Action: Auto-next (only visible when track mode is enabled) */}
+        {trackModeEnabled && (
+          <Button
+            variant={autoNext ? "secondary" : "ghost"}
+            size="sm"
+            className={`h-8 gap-2 transition-all ${autoNext
+              ? 'bg-cyan-500/20 text-cyan-500 border-cyan-500/50 hover:bg-cyan-500/30'
+              : 'text-muted-foreground'} ${isPropagating && autoNext ? 'animate-pulse' : ''}`}
+            onClick={() => {
+              if (autoNext) {
+                // Stop auto-tracking - this now cancels in-progress propagation too
+                stopAutoTracking();
+                setAutoNext(false);
+              } else {
+                setAutoNext(true);
+              }
+            }}
+            title={isPropagating && autoNext ? "Click to stop auto-tracking" : "Auto-advance after tracking (Shift+T)"}
+          >
+            {isPropagating && autoNext ? (
+              <Square className="h-4 w-4" />
+            ) : (
+              <FastForward className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">{isPropagating && autoNext ? 'Stop' : 'Auto'}</span>
+            <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(⇧T)</span>
+          </Button>
+        )}
 
         {/* Action: Review */}
         <Button

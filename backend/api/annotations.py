@@ -146,18 +146,109 @@ async def delete_annotation(annotation_id: int):
 async def delete_all_annotations(project_id: int):
     """Delete all annotations in a project. USE WITH CAUTION."""
     store = get_store()
-    
+
     try:
         # Get all images in project
         images = store.list_images(project_id)
         total_deleted = 0
-        
+
         for image in images:
             annotations = store.list_annotations(image.id)
             for ann in annotations:
                 store.delete_annotation(ann.id)
                 total_deleted += 1
-        
+
         return {"status": "deleted", "count": total_deleted}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class FallbackReferenceResponse(BaseModel):
+    found: bool
+    annotation: Optional[AnnotationResponse] = None
+    image_index: Optional[int] = None
+
+
+@router.get("/fallback/{label_id}", response_model=FallbackReferenceResponse)
+async def find_fallback_reference(
+    label_id: int,
+    before_image_index: int,
+    project_id: int,
+):
+    """
+    Find the first approved annotation for a label that can be used as a fallback reference.
+
+    Searches backwards from before_image_index to find an approved annotation.
+    This is used when propagation from the previous image fails.
+    """
+    store = get_store()
+
+    # Get all images in project, sorted by order_index
+    images = store.list_images(project_id)
+    images_sorted = sorted(images, key=lambda img: img.order_index)
+
+    # Search backwards from before_image_index (iterate in reverse to find most recent)
+    for img in reversed(images_sorted):
+        if img.order_index >= before_image_index:
+            continue
+
+        annotations = store.list_annotations(img.id)
+        for ann in annotations:
+            if ann.label_id == label_id and ann.status == "approved":
+                return FallbackReferenceResponse(
+                    found=True,
+                    annotation=annotation_to_response(ann),
+                    image_index=img.order_index,
+                )
+
+    return FallbackReferenceResponse(found=False)
+
+
+class MissingAnnotationsResponse(BaseModel):
+    """Response for images missing annotations for a specific label."""
+
+    image_indices: list[int]
+    total_missing: int
+
+
+@router.get("/missing/{project_id}", response_model=MissingAnnotationsResponse)
+async def find_images_missing_annotations(
+    project_id: int,
+    label_id: Optional[int] = None,
+):
+    """
+    Find images that are missing annotations.
+
+    If label_id is provided, finds images missing that specific label.
+    If label_id is None, finds images with no annotations at all.
+
+    Returns image indices sorted by order_index.
+    """
+    store = get_store()
+
+    # Get all images in project
+    images = store.list_images(project_id)
+    images_sorted = sorted(images, key=lambda img: img.order_index)
+
+    # Batch query all annotations for the project (single query instead of N+1)
+    annotations_by_image = store.list_annotations_for_project(project_id)
+
+    missing_indices = []
+
+    for img in images_sorted:
+        annotations = annotations_by_image.get(img.id, [])
+
+        if label_id is not None:
+            # Check if this specific label is missing
+            has_label = any(ann.label_id == label_id for ann in annotations)
+            if not has_label:
+                missing_indices.append(img.order_index)
+        else:
+            # Check if image has no annotations at all
+            if len(annotations) == 0:
+                missing_indices.append(img.order_index)
+
+    return MissingAnnotationsResponse(
+        image_indices=missing_indices,
+        total_missing=len(missing_indices),
+    )

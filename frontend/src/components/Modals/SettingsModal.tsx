@@ -1,6 +1,7 @@
 import { useUIStore, type EmbedModel } from '../../stores/uiStore';
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
+import type { PropagationMode } from '../../types';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,21 @@ export function SettingsModal() {
     setStopOnSizeMismatch,
     topK,
     setTopK,
+    propagationMode,
+    setPropagationMode,
+    iouVerify,
+    setIouVerify,
+    iouThreshold,
+    setIouThreshold,
+    samMaskThreshold,
+    setSamMaskThreshold,
+    samMultimaskOutput,
+    setSamMultimaskOutput,
+    samMinRegionArea,
+    setSamMinRegionArea,
+    samKeepLargestRegion,
+    setSamKeepLargestRegion,
+    samLoaded,
   } = useUIStore();
 
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
@@ -132,6 +148,80 @@ export function SettingsModal() {
             </div>
           </div>
 
+          {/* SAM Settings */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+              Segmentation (SAM)
+              <Separator className="flex-1" />
+            </h3>
+
+            <div className="space-y-6 pl-2">
+              {!samLoaded && (
+                <p className="text-xs text-amber-500">
+                  Load the SAM model first to adjust these settings.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Mask Threshold</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {samMaskThreshold.toFixed(2)}
+                  </span>
+                </div>
+                <Slider
+                  min={-200}
+                  max={200}
+                  step={5}
+                  value={[samMaskThreshold * 100]}
+                  onValueChange={(vals) => setSamMaskThreshold(vals[0] / 100)}
+                  disabled={!samLoaded}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Controls mask boundary sensitivity. Lower values = larger masks, higher values = smaller/tighter masks.
+                  Range: -2.0 to 2.0. Default: 0.0
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Min Region Size</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {samMinRegionArea} px
+                  </span>
+                </div>
+                <Slider
+                  min={0}
+                  max={2000}
+                  step={50}
+                  value={[samMinRegionArea]}
+                  onValueChange={(vals) => setSamMinRegionArea(vals[0])}
+                  disabled={!samLoaded}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Remove disconnected regions smaller than this size. Helps eliminate noise and small artifacts.
+                  Set to 0 to keep all regions. Default: 100
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="keep-largest-region"
+                  checked={samKeepLargestRegion}
+                  onCheckedChange={setSamKeepLargestRegion}
+                  disabled={!samLoaded}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="keep-largest-region">Keep Only Largest Region</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, ONLY the largest connected region is kept - all other disconnected parts are removed.
+                    When disabled, all regions larger than Min Region Size are kept.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Propagation Settings */}
           <div className="space-y-4">
             <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
@@ -140,6 +230,61 @@ export function SettingsModal() {
             </h3>
 
             <div className="space-y-6 pl-2">
+              <div className="space-y-2">
+                <Label>Propagation Mode</Label>
+                <Select
+                  value={propagationMode}
+                  onValueChange={(val) => setPropagationMode(val as PropagationMode)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (Recommended)</SelectItem>
+                    <SelectItem value="peak">Peak-based</SelectItem>
+                    <SelectItem value="dense">Dense correspondence</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Auto tries peak-based first, falls back to dense if needed. Dense uses legacy-style patch correspondence.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="iou-verify"
+                  checked={iouVerify}
+                  onCheckedChange={setIouVerify}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="iou-verify">IoU Verification</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Verify propagation results against dense prediction. Rejects results below threshold.
+                  </p>
+                </div>
+              </div>
+
+              {iouVerify && (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label>IoU Threshold</Label>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                      {(iouThreshold * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={[iouThreshold * 100]}
+                    onValueChange={(vals) => setIouThreshold(vals[0] / 100)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Minimum IoU between SAM result and dense prediction to accept.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>Peak Candidates (Top-K)</Label>

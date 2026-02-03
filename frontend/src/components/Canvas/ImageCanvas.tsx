@@ -227,8 +227,9 @@ export function ImageCanvas() {
       return;
     }
 
-    // For other modes, ignore if clicking on an annotation
-    if (e.target !== stageRef.current && e.target !== imageRef.current) return;
+    // In view mode, ignore if clicking on an annotation (allow selection to handle it)
+    // In draw mode, we want to draw through existing annotations
+    if (mode === 'view' && e.target !== stageRef.current && e.target !== imageRef.current) return;
 
     if (mode === 'draw') {
       setIsDrawing(true);
@@ -241,10 +242,9 @@ export function ImageCanvas() {
 
   // Mouse move
   const handleMouseMove = () => {
-    if (!isDrawing || mode !== 'draw') return;
-
     const pos = getImagePointer();
-    if (!pos) return;
+    
+    if (!isDrawing || mode !== 'draw' || !pos) return;
 
     setDrawingBbox((prev) => prev ? { ...prev, x2: pos.x, y2: pos.y } : null);
   };
@@ -416,7 +416,7 @@ export function ImageCanvas() {
                   stroke={color}
                   strokeWidth={isSelected ? 3 : 2}
                   fill={isSelected && !maskCanvases.has(ann.id) ? `${color}20` : 'transparent'}
-                  draggable={mode !== 'view'}
+                  draggable={mode === 'refine'}
                   onClick={() => selectAnnotation(ann.id)}
                   onTap={() => selectAnnotation(ann.id)}
                   onDragEnd={(e) => {

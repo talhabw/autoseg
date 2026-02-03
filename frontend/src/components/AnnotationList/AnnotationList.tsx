@@ -12,7 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { Check, X, Trash2, Tag } from "lucide-react";
+import { Check, X, Trash2, Tag, Search } from "lucide-react";
+import { useState } from "react";
 
 export function AnnotationList() {
   const {
@@ -21,11 +22,13 @@ export function AnnotationList() {
     selectedAnnotationId,
     selectAnnotation,
     updateAnnotation,
-    deleteAnnotation
+    deleteAnnotation,
+    createAnnotation,
   } = useAnnotationStore();
 
-  const { currentImageIndex, setCurrentImageIndex } = useProjectStore();
-  const { reviewFilter, setReviewFilter, reviewModeEnabled } = useUIStore();
+  const { currentImageIndex, setCurrentImageIndex, currentImage } = useProjectStore();
+  const { reviewFilter, setReviewFilter, reviewModeEnabled, propagationLoaded, addToast } = useUIStore();
+  const [isFindingInstances, setIsFindingInstances] = useState(false);
 
   const getLabel = (labelId: number) => labels.find((l) => l.id === labelId);
 
@@ -75,6 +78,77 @@ export function AnnotationList() {
       }
     } catch (err) {
       console.error('Failed to get pending images:', err);
+    }
+  };
+
+  // Find all instances of the selected annotation's class in the current image
+  const findAllInstances = async (annotationId: number) => {
+    if (!currentImage || !propagationLoaded) {
+      addToast('Models not loaded', 'warning');
+      return;
+    }
+
+    const selectedAnn = annotations.find(a => a.id === annotationId);
+    if (!selectedAnn) return;
+
+    setIsFindingInstances(true);
+    try {
+      const result = await api.findAllInstances(
+        currentImage.id,
+        annotationId,
+        currentImage.id,
+        {
+          minSimilarity: 0.5,
+          maxInstances: 20,
+          sizeTolerance: 0.5,
+          useCachedMasks: true,
+        }
+      );
+
+      if (result.count === 0) {
+        addToast('No additional instances found', 'info');
+        return;
+      }
+
+      // Create annotations for each found instance
+      let created = 0;
+      for (const instance of result.instances) {
+        // Check if this overlaps significantly with existing annotation
+        const overlaps = annotations.some(existing => {
+          if (!existing.bbox) return false;
+          const [ex1, ey1, ex2, ey2] = existing.bbox;
+          const [nx1, ny1, nx2, ny2] = instance.bbox;
+          const overlapX = Math.max(0, Math.min(ex2, nx2) - Math.max(ex1, nx1));
+          const overlapY = Math.max(0, Math.min(ey2, ny2) - Math.max(ey1, ny1));
+          const overlapArea = overlapX * overlapY;
+          const existingArea = (ex2 - ex1) * (ey2 - ey1);
+          return overlapArea / existingArea > 0.5;
+        });
+
+        if (!overlaps) {
+          await createAnnotation({
+            image_id: currentImage.id,
+            label_id: selectedAnn.label_id,
+            bbox: instance.bbox,
+            mask_rle: instance.mask_rle,
+            polygon: instance.polygon,
+            source: 'propagated',
+            status: 'pending',
+          });
+          created++;
+        }
+      }
+
+      if (created > 0) {
+        addToast(`Found ${created} new instances`, 'success');
+      } else {
+        addToast('All instances already annotated', 'info');
+      }
+    } catch (err) {
+      console.error('Find instances failed:', err);
+      addToast('Failed to find instances', 'error');
+    } finally {
+      setIsFindingInstances(false);
     }
   };
 
@@ -271,6 +345,23 @@ export function AnnotationList() {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {/* Find All Instances button */}
+                    {propagationLoaded && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 border-blue-500/20 h-7 text-xs font-normal"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          findAllInstances(ann.id);
+                        }}
+                        disabled={isFindingInstances}
+                      >
+                        <Search className="w-3 h-3 mr-1" />
+                        {isFindingInstances ? 'Finding...' : 'Find All Similar'}
+                      </Button>
+                    )}
 
                     {/* Action buttons */}
                     <div className="flex gap-2">

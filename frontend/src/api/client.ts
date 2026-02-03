@@ -5,7 +5,10 @@ import type {
   Label, 
   Annotation, 
   SegmentResult, 
-  PropagateResult 
+  PropagateResult,
+  FindAllInstancesResult,
+  PropagateAdvancedResult,
+  PropagationMode,
 } from '../types';
 
 const api = axios.create({
@@ -100,6 +103,14 @@ export async function createLabel(name: string, color?: string): Promise<Label> 
   return response.data;
 }
 
+export async function updateLabel(
+  labelId: number,
+  data: { name?: string; color?: string }
+): Promise<Label> {
+  const response = await api.patch<Label>(`/labels/${labelId}`, data);
+  return response.data;
+}
+
 // ==================== Annotations ====================
 
 export async function listAnnotations(imageId: number): Promise<Annotation[]> {
@@ -145,6 +156,41 @@ export async function deleteAllAnnotations(projectId: number): Promise<{ count: 
   return { count: response.data.count };
 }
 
+export interface FallbackReferenceResult {
+  found: boolean;
+  annotation: Annotation | null;
+  image_index: number | null;
+}
+
+export async function findFallbackReference(
+  labelId: number,
+  beforeImageIndex: number,
+  projectId: number
+): Promise<FallbackReferenceResult> {
+  const response = await api.get<FallbackReferenceResult>(`/annotations/fallback/${labelId}`, {
+    params: {
+      before_image_index: beforeImageIndex,
+      project_id: projectId,
+    },
+  });
+  return response.data;
+}
+
+export interface MissingAnnotationsResult {
+  image_indices: number[];
+  total_missing: number;
+}
+
+export async function findImagesMissingAnnotations(
+  projectId: number,
+  labelId?: number
+): Promise<MissingAnnotationsResult> {
+  const response = await api.get<MissingAnnotationsResult>(`/annotations/missing/${projectId}`, {
+    params: labelId !== undefined ? { label_id: labelId } : {},
+  });
+  return response.data;
+}
+
 // ==================== ML ====================
 
 export async function loadSAM(device = 'cuda'): Promise<void> {
@@ -153,6 +199,24 @@ export async function loadSAM(device = 'cuda'): Promise<void> {
 
 export async function getSAMStatus(): Promise<{ loaded: boolean }> {
   const response = await api.get<{ loaded: boolean }>('/ml/sam/status');
+  return response.data;
+}
+
+export interface SAMSettings {
+  mask_threshold: number;
+  multimask_output: boolean;
+  stability_score_offset: number;
+  min_region_area: number;
+  keep_largest_region: boolean;
+}
+
+export async function getSAMSettings(): Promise<SAMSettings> {
+  const response = await api.get<SAMSettings>('/ml/sam/settings');
+  return response.data;
+}
+
+export async function updateSAMSettings(settings: Partial<SAMSettings>): Promise<SAMSettings> {
+  const response = await api.patch<SAMSettings>('/ml/sam/settings', settings);
   return response.data;
 }
 
@@ -218,6 +282,76 @@ export async function propagate(
     stop_on_size_mismatch: stopOnSizeMismatch,
     skip_duplicate_threshold: skipDuplicateThreshold,
     top_k: topK,
+  });
+  return response.data;
+}
+
+// ==================== Advanced ML Features ====================
+
+/**
+ * Find all instances of a class in the target image.
+ * Uses a reference annotation to define what the class looks like.
+ */
+export async function findAllInstances(
+  referenceImageId: number,
+  referenceAnnotationId: number,
+  targetImageId: number,
+  options: {
+    minSimilarity?: number;
+    maxInstances?: number;
+    sizeTolerance?: number;
+    useCachedMasks?: boolean;
+  } = {}
+): Promise<FindAllInstancesResult> {
+  const response = await api.post<FindAllInstancesResult>('/ml/find-instances', {
+    reference_image_id: referenceImageId,
+    reference_annotation_id: referenceAnnotationId,
+    target_image_id: targetImageId,
+    min_similarity: options.minSimilarity ?? 0.6,
+    max_instances: options.maxInstances ?? 20,
+    size_tolerance: options.sizeTolerance ?? 0.5,
+    use_cached_masks: options.useCachedMasks ?? true,
+  });
+  return response.data;
+}
+
+/**
+ * Advanced propagation with mode selection and IoU verification.
+ * 
+ * Modes:
+ * - "peak": Peak-based propagation (default)
+ * - "dense": Dense feature correspondence (legacy DINO style)  
+ * - "auto": Try peak first, fall back to dense if needed
+ */
+export async function propagateAdvanced(
+  sourceImageId: number,
+  targetImageId: number,
+  sourceAnnotationId: number,
+  options: {
+    mode?: PropagationMode;
+    iouVerify?: boolean;
+    iouThreshold?: number;
+    useCachedMasks?: boolean;
+    sizeMinRatio?: number;
+    sizeMaxRatio?: number;
+    stopOnSizeMismatch?: boolean;
+    topK?: number;
+    skipDuplicateThreshold?: number;
+  } = {}
+): Promise<PropagateAdvancedResult> {
+  const response = await api.post<PropagateAdvancedResult>('/ml/propagate/advanced', {
+    source_image_id: sourceImageId,
+    target_image_id: targetImageId,
+    source_annotation_id: sourceAnnotationId,
+    mode: options.mode ?? 'auto',
+    iou_verify: options.iouVerify ?? true,
+    iou_threshold: options.iouThreshold ?? 0.3,
+    use_cached_masks: options.useCachedMasks ?? true,
+    size_min_ratio: options.sizeMinRatio ?? 0.8,
+    size_max_ratio: options.sizeMaxRatio ?? 1.2,
+    stop_on_size_mismatch: options.stopOnSizeMismatch ?? true,
+    top_k: options.topK ?? 5,
+    skip_duplicate_threshold: options.skipDuplicateThreshold ?? 0.9,
   });
   return response.data;
 }
