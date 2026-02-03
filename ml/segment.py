@@ -37,6 +37,8 @@ class SegmentService:
             "mask_threshold": 0.0,  # Logit threshold for binary mask (higher = more conservative)
             "multimask_output": True,  # Generate multiple mask candidates
             "stability_score_offset": 1.0,  # Offset for stability score calculation
+            "min_region_area": 100,  # Minimum area in pixels to keep (removes small islands)
+            "keep_largest_region": True,  # Always keep the largest connected region
         }
 
     @property
@@ -53,6 +55,9 @@ class SegmentService:
                            Range: -2.0 to 2.0. Higher = smaller/more conservative masks.
             multimask_output: Generate multiple mask candidates (default True)
             stability_score_offset: Offset for stability calculation (default 1.0)
+            min_region_area: Minimum area in pixels to keep a region (default 100)
+                            Smaller regions are removed as noise.
+            keep_largest_region: Always keep the largest connected region (default True)
 
         Returns:
             Updated settings dict
@@ -252,6 +257,16 @@ class SegmentService:
         mask_threshold = self._settings.get("mask_threshold", 0.0)
         mask = (mask > mask_threshold).astype(np.uint8)
 
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
+
         # Compute refined bbox from mask
         from core.masks import mask_to_bbox
 
@@ -333,6 +348,16 @@ class SegmentService:
         mask_threshold = self._settings.get("mask_threshold", 0.0)
         mask = (mask > mask_threshold).astype(np.uint8)
 
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
+
         # Get bbox from mask
         from core.masks import mask_to_bbox
 
@@ -396,6 +421,16 @@ class SegmentService:
         # Convert to binary uint8 using configurable threshold
         mask_threshold = self._settings.get("mask_threshold", 0.0)
         mask = (mask > mask_threshold).astype(np.uint8)
+
+        # Remove small disconnected regions (noise/islands)
+        min_region_area = self._settings.get("min_region_area", 100)
+        keep_largest = self._settings.get("keep_largest_region", True)
+        if min_region_area > 0:
+            from core.masks import remove_small_regions
+
+            mask = remove_small_regions(
+                mask, min_area=min_region_area, keep_largest=keep_largest
+            )
 
         # Get bbox from mask
         from core.masks import mask_to_bbox

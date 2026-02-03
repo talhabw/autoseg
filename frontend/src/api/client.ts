@@ -206,6 +206,8 @@ export interface SAMSettings {
   mask_threshold: number;
   multimask_output: boolean;
   stability_score_offset: number;
+  min_region_area: number;
+  keep_largest_region: boolean;
 }
 
 export async function getSAMSettings(): Promise<SAMSettings> {

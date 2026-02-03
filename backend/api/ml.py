@@ -47,12 +47,16 @@ class SAMSettingsRequest(BaseModel):
     mask_threshold: Optional[float] = None  # Range: -2.0 to 2.0
     multimask_output: Optional[bool] = None
     stability_score_offset: Optional[float] = None
+    min_region_area: Optional[int] = None  # Minimum pixels to keep
+    keep_largest_region: Optional[bool] = None
 
 
 class SAMSettingsResponse(BaseModel):
     mask_threshold: float
     multimask_output: bool
     stability_score_offset: float
+    min_region_area: int
+    keep_largest_region: bool
 
 
 class SegmentRequest(BaseModel):
@@ -146,6 +150,8 @@ async def get_sam_settings():
         mask_threshold=settings.get("mask_threshold", 0.0),
         multimask_output=settings.get("multimask_output", True),
         stability_score_offset=settings.get("stability_score_offset", 1.0),
+        min_region_area=settings.get("min_region_area", 100),
+        keep_largest_region=settings.get("keep_largest_region", True),
     )
 
 
@@ -158,6 +164,8 @@ async def update_sam_settings(request: SAMSettingsRequest):
       Higher values = smaller/more conservative masks. Default: 0.0
     - multimask_output: Generate multiple mask candidates. Default: true
     - stability_score_offset: Offset for stability calculation. Default: 1.0
+    - min_region_area: Minimum pixels to keep a region (removes small islands). Default: 100
+    - keep_largest_region: Always keep the largest connected region. Default: true
     """
     segment_service = get_segment_service()
 
@@ -169,12 +177,18 @@ async def update_sam_settings(request: SAMSettingsRequest):
         updates["multimask_output"] = request.multimask_output
     if request.stability_score_offset is not None:
         updates["stability_score_offset"] = request.stability_score_offset
+    if request.min_region_area is not None:
+        updates["min_region_area"] = max(0, request.min_region_area)
+    if request.keep_largest_region is not None:
+        updates["keep_largest_region"] = request.keep_largest_region
 
     settings = segment_service.update_settings(**updates)
     return SAMSettingsResponse(
         mask_threshold=settings.get("mask_threshold", 0.0),
         multimask_output=settings.get("multimask_output", True),
         stability_score_offset=settings.get("stability_score_offset", 1.0),
+        min_region_area=settings.get("min_region_area", 100),
+        keep_largest_region=settings.get("keep_largest_region", True),
     )
 
 

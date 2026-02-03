@@ -29,6 +29,8 @@ interface UIState {
   // SAM settings
   samMaskThreshold: number; // Logit threshold for mask generation (-2.0 to 2.0)
   samMultimaskOutput: boolean; // Generate multiple mask candidates
+  samMinRegionArea: number; // Minimum pixels to keep (removes small islands)
+  samKeepLargestRegion: boolean; // Always keep largest connected region
   
   // Session state (not persisted)
   mode: InteractionMode;
@@ -78,6 +80,8 @@ interface UIState {
   // SAM settings actions
   setSamMaskThreshold: (threshold: number) => Promise<void>;
   setSamMultimaskOutput: (enabled: boolean) => Promise<void>;
+  setSamMinRegionArea: (area: number) => Promise<void>;
+  setSamKeepLargestRegion: (enabled: boolean) => Promise<void>;
   syncSamSettings: () => Promise<void>;
   
   // Status
@@ -106,6 +110,8 @@ export const useUIStore = create<UIState>()(
       // SAM settings
       samMaskThreshold: 0.0, // Default: 0.0 (standard logit threshold)
       samMultimaskOutput: true, // Default: generate multiple candidates
+      samMinRegionArea: 100, // Default: remove regions smaller than 100 pixels
+      samKeepLargestRegion: true, // Default: always keep largest region
       
       // Session state
       mode: 'view',
@@ -228,12 +234,33 @@ export const useUIStore = create<UIState>()(
         }
       },
       
+      setSamMinRegionArea: async (area) => {
+        const clamped = Math.max(0, area);
+        set({ samMinRegionArea: clamped });
+        try {
+          await api.updateSAMSettings({ min_region_area: clamped });
+        } catch (err) {
+          console.error('Failed to update SAM min region area:', err);
+        }
+      },
+      
+      setSamKeepLargestRegion: async (enabled) => {
+        set({ samKeepLargestRegion: enabled });
+        try {
+          await api.updateSAMSettings({ keep_largest_region: enabled });
+        } catch (err) {
+          console.error('Failed to update SAM keep largest region:', err);
+        }
+      },
+      
       syncSamSettings: async () => {
         try {
           const settings = await api.getSAMSettings();
           set({
             samMaskThreshold: settings.mask_threshold,
             samMultimaskOutput: settings.multimask_output,
+            samMinRegionArea: settings.min_region_area,
+            samKeepLargestRegion: settings.keep_largest_region,
           });
         } catch (err) {
           console.error('Failed to sync SAM settings:', err);

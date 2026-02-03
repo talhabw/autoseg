@@ -47,6 +47,10 @@ export function SettingsModal() {
     setSamMaskThreshold,
     samMultimaskOutput,
     setSamMultimaskOutput,
+    samMinRegionArea,
+    setSamMinRegionArea,
+    samKeepLargestRegion,
+    setSamKeepLargestRegion,
     samLoaded,
   } = useUIStore();
 
@@ -190,6 +194,42 @@ export function SettingsModal() {
                   <Label htmlFor="multimask-output">Multi-mask Output</Label>
                   <p className="text-xs text-muted-foreground">
                     Generate multiple mask candidates and select the best one. Recommended for ambiguous prompts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Min Region Size</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {samMinRegionArea} px
+                  </span>
+                </div>
+                <Slider
+                  min={0}
+                  max={2000}
+                  step={50}
+                  value={[samMinRegionArea]}
+                  onValueChange={(vals) => setSamMinRegionArea(vals[0])}
+                  disabled={!samLoaded}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Remove disconnected regions smaller than this size. Helps eliminate noise and small artifacts.
+                  Set to 0 to keep all regions. Default: 100
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="keep-largest-region"
+                  checked={samKeepLargestRegion}
+                  onCheckedChange={setSamKeepLargestRegion}
+                  disabled={!samLoaded}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="keep-largest-region">Always Keep Largest Region</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Always preserve the largest connected region, even if it's smaller than min region size.
                   </p>
                 </div>
               </div>
