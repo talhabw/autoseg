@@ -103,6 +103,14 @@ export async function createLabel(name: string, color?: string): Promise<Label> 
   return response.data;
 }
 
+export async function updateLabel(
+  labelId: number,
+  data: { name?: string; color?: string }
+): Promise<Label> {
+  const response = await api.patch<Label>(`/labels/${labelId}`, data);
+  return response.data;
+}
+
 // ==================== Annotations ====================
 
 export async function listAnnotations(imageId: number): Promise<Annotation[]> {

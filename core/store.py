@@ -373,6 +373,51 @@ class ProjectStore:
         row = cursor.fetchone()
         return self._row_to_label(row) if row else None
 
+    def update_label(
+        self,
+        label_id: int,
+        name: Optional[str] = None,
+        color_hex: Optional[str] = None,
+    ) -> Label:
+        """
+        Update a label's name and/or color.
+
+        Args:
+            label_id: ID of the label to update
+            name: New name (optional)
+            color_hex: New color in hex format (optional)
+
+        Returns:
+            Updated Label object
+
+        Raises:
+            ValueError: If label not found
+        """
+        label = self.get_label_by_id(label_id)
+        if label is None:
+            raise ValueError(f"Label with ID {label_id} not found")
+
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+
+        if color_hex is not None:
+            updates.append("color_hex = ?")
+            params.append(color_hex)
+
+        if updates:
+            params.append(label_id)
+            self.conn.execute(
+                f"UPDATE labels SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+            self.commit()
+
+        return self.get_label_by_id(label_id)
+
     def get_label_by_name(self, project_id: int, name: str) -> Optional[Label]:
         """Get label by its name."""
         cursor = self.conn.execute(
