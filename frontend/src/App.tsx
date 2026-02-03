@@ -440,7 +440,7 @@ function AppContent() {
             let isBatchDuplicate = false;
             for (const existing of propagationResults) {
               const iou = bboxIoU(result.bbox, existing.bbox);
-              if (iou >= 0.85) {
+              if (iou >= BBOX_IOU_THRESHOLD) {
                 console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
                 isBatchDuplicate = true;
                 break;
