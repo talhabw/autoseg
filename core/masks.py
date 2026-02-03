@@ -166,7 +166,10 @@ def remove_small_regions(
     Returns:
         Cleaned binary mask with small regions removed
     """
+    import logging
     from scipy import ndimage
+
+    logger = logging.getLogger(__name__)
 
     if mask.sum() == 0:
         return mask
@@ -179,16 +182,32 @@ def remove_small_regions(
 
     if num_features == 1:
         # Only one region, keep it
+        region_size = int(mask.sum())
+        logger.info(f"[remove_small_regions] Single region detected: {region_size} px")
         return mask
 
     # Get sizes of each region
     region_sizes = ndimage.sum(mask, labeled_mask, range(1, num_features + 1))
+
+    # Log all region sizes for debugging
+    sorted_sizes = sorted(enumerate(region_sizes), key=lambda x: x[1], reverse=True)
+    logger.info(
+        f"[remove_small_regions] Found {num_features} regions, keep_largest={keep_largest}, min_area={min_area}"
+    )
+    for i, (idx, size) in enumerate(sorted_sizes[:10]):  # Show top 10
+        label = idx + 1
+        logger.info(f"  Region {i + 1}: {int(size)} px (label={label})")
+    if len(sorted_sizes) > 10:
+        logger.info(f"  ... and {len(sorted_sizes) - 10} more smaller regions")
 
     # Find regions to keep
     if keep_largest:
         # ONLY keep the largest region - ignore all others
         largest_idx = np.argmax(region_sizes) + 1  # +1 because labels start at 1
         regions_to_keep = [largest_idx]
+        logger.info(
+            f"  -> Keeping ONLY largest region (label={largest_idx}, {int(region_sizes[largest_idx - 1])} px)"
+        )
     else:
         # Keep all regions that meet min_area threshold
         regions_to_keep = [
@@ -199,9 +218,16 @@ def remove_small_regions(
             # If nothing meets criteria, keep largest
             largest_idx = np.argmax(region_sizes) + 1
             regions_to_keep = [largest_idx]
+            logger.info(f"  -> No regions >= {min_area} px, keeping largest")
+        else:
+            logger.info(f"  -> Keeping {len(regions_to_keep)} regions >= {min_area} px")
 
     # Create cleaned mask
     cleaned_mask = np.isin(labeled_mask, regions_to_keep).astype(np.uint8)
+
+    removed_count = num_features - len(regions_to_keep)
+    if removed_count > 0:
+        logger.info(f"  -> Removed {removed_count} small regions")
 
     return cleaned_mask
 
