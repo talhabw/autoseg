@@ -96,10 +96,10 @@ export const useUIStore = create<UIState>()(
     (set, get) => ({
       // Persisted settings (initial values, will be overridden from storage)
       lastProjectPath: null,
-      embedModel: 'vith16',
+      embedModel: 'vitl16', // Default: DINOv3 ViT-L
       maskOpacity: 0.5,
-      sizeMinRatio: 0.8,
-      sizeMaxRatio: 1.2,
+      sizeMinRatio: 0.5, // Min allowed size ratio (0.5x)
+      sizeMaxRatio: 2.0, // Max allowed size ratio (2.0x)
       stopOnSizeMismatch: true,  // Default: stop on size mismatch (safer)
       topK: 5, // Try 5 peak candidates by default
       propagationMode: 'auto', // Default: auto mode tries peak then dense
@@ -110,7 +110,7 @@ export const useUIStore = create<UIState>()(
       // SAM settings
       samMaskThreshold: 0.0, // Default: 0.0 (standard logit threshold)
       samMultimaskOutput: true, // Default: generate multiple candidates
-      samMinRegionArea: 100, // Default: remove regions smaller than 100 pixels
+      samMinRegionArea: 1200, // Default: remove regions smaller than 1200 pixels
       samKeepLargestRegion: true, // Default: always keep largest region
       
       // Session state

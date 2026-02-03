@@ -37,7 +37,7 @@ class SegmentService:
             "mask_threshold": 0.0,  # Logit threshold for binary mask (higher = more conservative)
             "multimask_output": True,  # Generate multiple mask candidates
             "stability_score_offset": 1.0,  # Offset for stability score calculation
-            "min_region_area": 100,  # Minimum area in pixels to keep (removes small islands)
+            "min_region_area": 1200,  # Minimum area in pixels to keep (removes small islands)
             "keep_largest_region": True,  # Always keep the largest connected region
         }
 

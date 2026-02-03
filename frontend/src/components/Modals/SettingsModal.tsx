@@ -183,21 +183,6 @@ export function SettingsModal() {
                 </p>
               </div>
 
-              <div className="flex items-center space-x-4 rounded-lg border p-4">
-                <Switch
-                  id="multimask-output"
-                  checked={samMultimaskOutput}
-                  onCheckedChange={setSamMultimaskOutput}
-                  disabled={!samLoaded}
-                />
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="multimask-output">Multi-mask Output</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Generate multiple mask candidates and select the best one. Recommended for ambiguous prompts.
-                  </p>
-                </div>
-              </div>
-
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>Min Region Size</Label>
