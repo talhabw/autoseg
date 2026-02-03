@@ -155,7 +155,8 @@ function AppContent() {
         polygon: result.polygon,
       });
 
-      clearPoints();
+      // Don't clear points after refinement - let them accumulate for iterative refinement
+      // User can press Escape to clear manually, or points clear when selecting different annotation
       useUIStore.getState().addToast(`Segmentation complete (score: ${(result.score * 100).toFixed(0)}%)`, 'success');
       useUIStore.getState().setMode('refine');
     } catch (err) {
@@ -190,6 +191,9 @@ function AppContent() {
     _lastPropagationTime = now;
     _propagationRequestId++;
     const currentRequestId = _propagationRequestId;
+    
+    // Set isPropagating immediately so UI shows stop button right away
+    setIsPropagating(true);
 
     console.log(`${logPrefix} ✅ Lock acquired, requestId=${currentRequestId}`);
 
@@ -202,6 +206,7 @@ function AppContent() {
     if (!currentImg || currentIdx >= currentImages.length - 1) {
       console.log(`${logPrefix} ⏭️ At last image or no image, just navigating without propagation`);
       _propagationLock = false;
+      setIsPropagating(false);
       goNext();
       return;
     }
@@ -244,18 +249,17 @@ function AppContent() {
         useUIStore.getState().addToast('Skipping unlabeled image...', 'info', 1000);
         _pendingAutoNext = true;
         _propagationLock = false;
+        setIsPropagating(false);
         goNext();
         return;
       }
       
       useUIStore.getState().addToast('No annotations to propagate. Add annotations first.', 'info');
       _propagationLock = false;
+      setIsPropagating(false);
       // Don't call goNext() - stay on current image
       return;
     }
-
-    setIsPropagating(true);
-    console.log(`${logPrefix} isPropagating=true`);
 
     // Track which labels failed propagation from previous image
     const failedLabels = new Set<number>();
