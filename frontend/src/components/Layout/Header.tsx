@@ -13,6 +13,7 @@ import {
   MousePointer2,
   Sparkles,
   Activity,
+  Square,
   CheckCircle2,
   Settings,
   FilePlus,
@@ -157,21 +158,24 @@ export function Header() {
             size="sm"
             className={`h-8 gap-2 transition-all ${autoNext
               ? 'bg-cyan-500/20 text-cyan-500 border-cyan-500/50 hover:bg-cyan-500/30'
-              : 'text-muted-foreground'}`}
+              : 'text-muted-foreground'} ${isPropagating && autoNext ? 'animate-pulse' : ''}`}
             onClick={() => {
               if (autoNext) {
-                // Stop auto-tracking
+                // Stop auto-tracking - this now cancels in-progress propagation too
                 stopAutoTracking();
                 setAutoNext(false);
               } else {
                 setAutoNext(true);
               }
             }}
-            disabled={isPropagating}
-            title="Auto-advance after tracking (Shift+T)"
+            title={isPropagating && autoNext ? "Click to stop auto-tracking" : "Auto-advance after tracking (Shift+T)"}
           >
-            <FastForward className="h-4 w-4" />
-            <span className="hidden sm:inline">Auto</span>
+            {isPropagating && autoNext ? (
+              <Square className="h-4 w-4" />
+            ) : (
+              <FastForward className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">{isPropagating && autoNext ? 'Stop' : 'Auto'}</span>
             <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(⇧T)</span>
           </Button>
         )}

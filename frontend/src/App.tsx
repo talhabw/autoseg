@@ -46,6 +46,9 @@ let _pendingAutoNext = false; // Flag to trigger auto-next after annotations loa
 // Export function to stop auto-tracking (used by UI components)
 export function stopAutoTracking() {
   _pendingAutoNext = false;
+  // Increment request ID to cancel any in-progress propagation
+  _propagationRequestId++;
+  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}`);
 }
 
 function AppContent() {
@@ -663,8 +666,8 @@ function AppContent() {
             if (trackEnabled) {
               const { autoNext: currentAutoNext, setAutoNext: setAuto } = useUIStore.getState();
               if (currentAutoNext) {
-                // Stop auto-tracking
-                _pendingAutoNext = false;
+                // Stop auto-tracking - also cancels in-progress propagation
+                stopAutoTracking();
                 setAuto(false);
                 useUIStore.getState().addToast('Auto-tracking stopped', 'info', 1500);
               } else {
@@ -683,8 +686,8 @@ function AppContent() {
                 setTrack(true);
               }
             } else {
-              // Turn off track mode (also disables auto-next)
-              _pendingAutoNext = false;
+              // Turn off track mode (also disables auto-next and cancels in-progress)
+              stopAutoTracking();
               useUIStore.getState().setAutoNext(false);
               setTrack(false);
             }
@@ -726,6 +729,12 @@ function AppContent() {
           }
           break;
         case 'escape':
+          // Stop auto-tracking if in progress, otherwise clear points
+          if (useUIStore.getState().autoNext) {
+            stopAutoTracking();
+            useUIStore.getState().setAutoNext(false);
+            useUIStore.getState().addToast('Auto-tracking cancelled', 'info', 1500);
+          }
           clearPoints();
           break;
         case 'delete':
