@@ -16,6 +16,27 @@ import * as api from './api/client';
 
 const queryClient = new QueryClient();
 
+// Helper to compute bounding box IoU for client-side duplicate detection
+function bboxIoU(box1: number[], box2: number[]): number {
+  const [x1_1, y1_1, x2_1, y2_1] = box1;
+  const [x1_2, y1_2, x2_2, y2_2] = box2;
+  
+  const xi1 = Math.max(x1_1, x1_2);
+  const yi1 = Math.max(y1_1, y1_2);
+  const xi2 = Math.min(x2_1, x2_2);
+  const yi2 = Math.min(y2_1, y2_2);
+  
+  const interWidth = Math.max(0, xi2 - xi1);
+  const interHeight = Math.max(0, yi2 - yi1);
+  const interArea = interWidth * interHeight;
+  
+  const area1 = (x2_1 - x1_1) * (y2_1 - y1_1);
+  const area2 = (x2_2 - x1_2) * (y2_2 - y1_2);
+  const unionArea = area1 + area2 - interArea;
+  
+  return unionArea > 0 ? interArea / unionArea : 0;
+}
+
 // Module-level state - truly synchronous, survives React re-renders
 let _propagationLock = false;
 let _lastPropagationTime = 0;
@@ -299,6 +320,7 @@ function AppContent() {
                 sizeMaxRatio,
                 stopOnSizeMismatch,
                 topK,
+                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
               }
             );
           } else {
@@ -314,11 +336,28 @@ function AppContent() {
             );
           }
 
-          // Check if this was a duplicate
+          // Check if this was a duplicate (detected by backend against existing DB annotations)
           if (result.duplicate_skipped) {
             console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
             duplicateSkipCount++;
             continue;  // Don't add to propagationResults
+          }
+
+          // Client-side duplicate check: compare against results already in this batch
+          // This catches duplicates that haven't been saved to DB yet
+          const BBOX_IOU_THRESHOLD = 0.85;  // Use bbox IoU as proxy for mask IoU
+          let isBatchDuplicate = false;
+          for (const existing of propagationResults) {
+            const iou = bboxIoU(result.bbox, existing.bbox);
+            if (iou >= BBOX_IOU_THRESHOLD) {
+              console.log(`${logPrefix} Batch duplicate detected for ann ${ann.id} (bbox IoU=${iou.toFixed(3)}), skipping`);
+              isBatchDuplicate = true;
+              break;
+            }
+          }
+          if (isBatchDuplicate) {
+            duplicateSkipCount++;
+            continue;
           }
 
           if (result.fallback_used) {
@@ -380,11 +419,27 @@ function AppContent() {
                 sizeMaxRatio,
                 stopOnSizeMismatch,
                 topK,
+                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
               }
             );
 
             if (result.duplicate_skipped) {
               console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+              duplicateSkipCount++;
+              continue;
+            }
+
+            // Client-side batch duplicate check for fallback results too
+            let isBatchDuplicate = false;
+            for (const existing of propagationResults) {
+              const iou = bboxIoU(result.bbox, existing.bbox);
+              if (iou >= 0.85) {
+                console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
+                isBatchDuplicate = true;
+                break;
+              }
+            }
+            if (isBatchDuplicate) {
               duplicateSkipCount++;
               continue;
             }

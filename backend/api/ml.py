@@ -493,6 +493,9 @@ class PropagateAdvancedRequest(BaseModel):
     size_max_ratio: float = 1.2
     stop_on_size_mismatch: bool = True
     top_k: int = 5
+    skip_duplicate_threshold: float = (
+        0.9  # Skip if IoU with existing >= this (0 = disabled)
+    )
 
 
 class PropagateAdvancedResponse(BaseModel):
@@ -646,6 +649,30 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
         rle = mask_to_rle(result.mask)
         polygon = mask_to_yolo_polygon(result.mask, tgt_w, tgt_h)
 
+        # Check for duplicates with existing annotations on target image
+        duplicate_skipped = False
+        duplicate_iou = 0.0
+
+        if request.skip_duplicate_threshold > 0:
+            target_annotations = store.list_annotations(request.target_image_id)
+
+            for existing_ann in target_annotations:
+                if existing_ann.mask_rle:
+                    try:
+                        existing_mask = rle_to_mask(existing_ann.mask_rle)
+                        iou = mask_iou(result.mask, existing_mask)
+
+                        if iou >= request.skip_duplicate_threshold:
+                            duplicate_skipped = True
+                            duplicate_iou = iou
+                            logger.info(
+                                f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
+                            )
+                            break
+                    except Exception as e:
+                        logger.warning(f"Failed to compare masks: {e}")
+                        continue
+
         return PropagateAdvancedResponse(
             bbox=result.bbox,
             mask_rle=rle,
@@ -655,6 +682,8 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
             area_ratio=result.area_ratio,
             method=result.method,
             iou_score=result.iou_score,
+            duplicate_skipped=duplicate_skipped,
+            duplicate_iou=duplicate_iou,
         )
 
     except PropagationSizeMismatchError as e:

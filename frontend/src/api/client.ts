@@ -318,6 +318,7 @@ export async function propagateAdvanced(
     sizeMaxRatio?: number;
     stopOnSizeMismatch?: boolean;
     topK?: number;
+    skipDuplicateThreshold?: number;
   } = {}
 ): Promise<PropagateAdvancedResult> {
   const response = await api.post<PropagateAdvancedResult>('/ml/propagate/advanced', {
@@ -332,6 +333,7 @@ export async function propagateAdvanced(
     size_max_ratio: options.sizeMaxRatio ?? 1.2,
     stop_on_size_mismatch: options.stopOnSizeMismatch ?? true,
     top_k: options.topK ?? 5,
+    skip_duplicate_threshold: options.skipDuplicateThreshold ?? 0.9,
   });
   return response.data;
 }
