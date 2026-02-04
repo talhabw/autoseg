@@ -99,6 +99,9 @@ class PropagateResponse(BaseModel):
     duplicate_iou: float = (
         0.0  # IoU with the overlapping annotation (if duplicate_skipped)
     )
+    conflicting_label_name: str | None = (
+        None  # If skipped due to different class at same location
+    )
 
 
 def _load_image(image_id: int) -> tuple[np.ndarray, int, int]:
@@ -482,10 +485,12 @@ async def propagate(request: PropagateRequest):
         # Check for duplicates with existing annotations on target image
         duplicate_skipped = False
         duplicate_iou = 0.0
+        conflicting_label_name = None
 
         if request.skip_duplicate_threshold > 0:
             # Get existing annotations on target image
             target_annotations = store.list_annotations(request.target_image_id)
+            source_label_id = ann.label_id
 
             for existing_ann in target_annotations:
                 if existing_ann.mask_rle:
@@ -496,9 +501,25 @@ async def propagate(request: PropagateRequest):
                         if iou >= request.skip_duplicate_threshold:
                             duplicate_skipped = True
                             duplicate_iou = iou
-                            logger.info(
-                                f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
-                            )
+
+                            # Check if it's the same label or different
+                            if existing_ann.label_id != source_label_id:
+                                # Different class at same location - get label name
+                                existing_label = store.get_label_by_id(
+                                    existing_ann.label_id
+                                )
+                                conflicting_label_name = (
+                                    existing_label.name
+                                    if existing_label
+                                    else f"label_{existing_ann.label_id}"
+                                )
+                                logger.info(
+                                    f"Skipping - location already labeled as '{conflicting_label_name}' (IoU={iou:.3f} with ann {existing_ann.id})"
+                                )
+                            else:
+                                logger.info(
+                                    f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
+                                )
                             break
                     except Exception as e:
                         logger.warning(f"Failed to compare masks: {e}")
@@ -517,6 +538,7 @@ async def propagate(request: PropagateRequest):
             area_ratio=area_ratio,
             duplicate_skipped=duplicate_skipped,
             duplicate_iou=duplicate_iou,
+            conflicting_label_name=conflicting_label_name,
         )
     except PropagationSizeMismatchError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -576,6 +598,9 @@ class PropagateAdvancedResponse(BaseModel):
     iou_score: Optional[float]
     duplicate_skipped: Optional[bool] = None
     duplicate_iou: Optional[float] = None
+    conflicting_label_name: str | None = (
+        None  # If skipped due to different class at same location
+    )
 
 
 @router.post("/find-instances", response_model=FindAllInstancesResponse)
@@ -719,9 +744,11 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
         # Check for duplicates with existing annotations on target image
         duplicate_skipped = False
         duplicate_iou = 0.0
+        conflicting_label_name = None
 
         if request.skip_duplicate_threshold > 0:
             target_annotations = store.list_annotations(request.target_image_id)
+            source_label_id = ann.label_id
 
             for existing_ann in target_annotations:
                 if existing_ann.mask_rle:
@@ -732,9 +759,25 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
                         if iou >= request.skip_duplicate_threshold:
                             duplicate_skipped = True
                             duplicate_iou = iou
-                            logger.info(
-                                f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
-                            )
+
+                            # Check if it's the same label or different
+                            if existing_ann.label_id != source_label_id:
+                                # Different class at same location - get label name
+                                existing_label = store.get_label_by_id(
+                                    existing_ann.label_id
+                                )
+                                conflicting_label_name = (
+                                    existing_label.name
+                                    if existing_label
+                                    else f"label_{existing_ann.label_id}"
+                                )
+                                logger.info(
+                                    f"Skipping - location already labeled as '{conflicting_label_name}' (IoU={iou:.3f} with ann {existing_ann.id})"
+                                )
+                            else:
+                                logger.info(
+                                    f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
+                                )
                             break
                     except Exception as e:
                         logger.warning(f"Failed to compare masks: {e}")
@@ -751,6 +794,7 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
             iou_score=result.iou_score,
             duplicate_skipped=duplicate_skipped,
             duplicate_iou=duplicate_iou,
+            conflicting_label_name=conflicting_label_name,
         )
 
     except PropagationSizeMismatchError as e:

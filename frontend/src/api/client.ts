@@ -397,6 +397,24 @@ export async function exportYolo(data: {
   return response.data;
 }
 
+export async function exportBbox(data: {
+  output_dir: string;
+  format: 'yolo-detect' | 'coco';
+  train_split?: number;
+  seed?: number;
+  approved_only?: boolean;
+  include_segmentation?: boolean;
+}): Promise<{
+  format: string;
+  train_images: number;
+  val_images: number;
+  total_annotations: number;
+  warnings: string[];
+}> {
+  const response = await api.post('/export/bbox', data);
+  return response.data;
+}
+
 // ==================== Files ====================
 
 export interface DirectoryEntry {

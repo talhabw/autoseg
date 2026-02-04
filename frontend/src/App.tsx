@@ -292,6 +292,7 @@ function AppContent() {
         polygon: number[];
       }> = [];
       let duplicateSkipCount = 0;
+      const notFoundLabels: { labelId: number; labelName: string }[] = [];  // Labels where object wasn't found in target
 
       for (let i = 0; i < sourceAnnotations.length; i++) {
         const ann = sourceAnnotations[i];
@@ -345,7 +346,16 @@ function AppContent() {
 
           // Check if this was a duplicate (detected by backend against existing DB annotations)
           if (result.duplicate_skipped) {
-            console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
+            // Check if it's because the object matched a different class (object not found in target)
+            if (result.conflicting_label_name) {
+              // Get the label name for the source annotation
+              const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === ann.label_id);
+              const sourceLabelName = sourceLabel?.name || `Label ${ann.label_id}`;
+              console.log(`${logPrefix} Object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}" (IoU=${result.duplicate_iou?.toFixed(3)})`);
+              notFoundLabels.push({ labelId: ann.label_id, labelName: sourceLabelName });
+            } else {
+              console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
+            }
             duplicateSkipCount++;
             continue;  // Don't add to propagationResults
           }
@@ -431,7 +441,18 @@ function AppContent() {
             );
 
             if (result.duplicate_skipped) {
-              console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+              // Check if it's because the object matched a different class
+              if (result.conflicting_label_name) {
+                const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
+                const sourceLabelName = sourceLabel?.name || `Label ${labelId}`;
+                console.log(`${logPrefix} Fallback object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}"`);
+                // Only add if not already in notFoundLabels
+                if (!notFoundLabels.some(l => l.labelId === labelId)) {
+                  notFoundLabels.push({ labelId, labelName: sourceLabelName });
+                }
+              } else {
+                console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+              }
               duplicateSkipCount++;
               continue;
             }
@@ -535,6 +556,24 @@ function AppContent() {
 
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
+
+      // If there were labels whose objects weren't found, auto-select the first one and switch to bbox mode
+      if (notFoundLabels.length > 0) {
+        const firstMissing = notFoundLabels[0];
+        console.log(`${logPrefix} 🎯 Auto-selecting missing label "${firstMissing.labelName}" and switching to bbox mode`);
+        
+        // Set selected label and switch to bbox drawing mode
+        useAnnotationStore.getState().selectLabel(firstMissing.labelId);
+        useUIStore.getState().setMode('bbox');
+        
+        // Show helpful toast
+        const missingNames = notFoundLabels.map(l => l.labelName).join(', ');
+        useUIStore.getState().addToast(
+          `Not found: ${missingNames}. Draw bbox to add.`,
+          'info',
+          4000
+        );
+      }
     } catch (err) {
       // Clear pending flag on error to prevent unwanted auto-propagation
       _pendingAutoNext = false;

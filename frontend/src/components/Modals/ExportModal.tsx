@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
-import { exportYolo, validateProject, type ValidateResponse } from '../../api/client';
+import { exportYolo, exportBbox, validateProject, type ValidateResponse } from '../../api/client';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import { FolderBrowser } from "../FolderBrowser/FolderBrowser";
 
 // Actually, I didn't install Checkbox. I'll use a standard input with Label for now or install it. 
 // Ideally I should install it, but to keep it simple and fast I'll use native input wrapped in Label as before but styled better, OR add checkbox installation.
@@ -25,9 +26,11 @@ export function ExportModal() {
   const { project } = useProjectStore();
 
   const [outputDir, setOutputDir] = useState('');
+  const [exportFormat, setExportFormat] = useState<'yolo-seg' | 'yolo-detect' | 'coco'>('yolo-seg');
   const [trainSplit, setTrainSplit] = useState('0.8');
   const [seed, setSeed] = useState('42');
   const [approvedOnly, setApprovedOnly] = useState(true);
+  const [includeSegmentation, setIncludeSegmentation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState('');
@@ -60,12 +63,25 @@ export function ExportModal() {
 
     setIsLoading(true);
     try {
-      const res = await exportYolo({
-        output_dir: outputDir,
-        train_split: split,
-        seed: parseInt(seed) || 42,
-        approved_only: approvedOnly,
-      });
+      let res;
+      if (exportFormat === 'yolo-seg') {
+        res = await exportYolo({
+          output_dir: outputDir,
+          train_split: split,
+          seed: parseInt(seed) || 42,
+          approved_only: approvedOnly,
+        });
+      } else {
+        const bboxRes = await exportBbox({
+          output_dir: outputDir,
+          format: exportFormat,
+          train_split: split,
+          seed: parseInt(seed) || 42,
+          approved_only: approvedOnly,
+          include_segmentation: includeSegmentation,
+        });
+        res = { ...bboxRes, is_valid: true };
+      }
       setResult(res);
       setStatusMessage(`Exported to ${outputDir}`);
     } catch (err) {
@@ -79,7 +95,7 @@ export function ExportModal() {
     <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Export YOLO-seg</DialogTitle>
+          <DialogTitle>Export Dataset</DialogTitle>
         </DialogHeader>
 
         {result ? (
@@ -133,13 +149,34 @@ export function ExportModal() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="outputDir">Output Directory (absolute path)</Label>
-              <Input
-                id="outputDir"
+              <Label htmlFor="exportFormat">Export Format</Label>
+              <select
+                id="exportFormat"
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value as 'yolo-seg' | 'yolo-detect' | 'coco')}
+                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                <option value="yolo-seg">YOLO Segmentation (polygons)</option>
+                <option value="yolo-detect">YOLO Detection (bboxes only)</option>
+                <option value="coco">COCO JSON (bboxes)</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {exportFormat === 'yolo-seg' && 'Exports segmentation polygons for YOLO training'}
+                {exportFormat === 'yolo-detect' && 'Exports bounding boxes in YOLO detection format (class cx cy w h)'}
+                {exportFormat === 'coco' && 'Exports bounding boxes in COCO JSON format'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="outputDir">Output Directory</Label>
+              <FolderBrowser
+                value={outputDir || `${project.root_dir}/export_${exportFormat.replace('-', '_')}`}
+                onChange={setOutputDir}
                 placeholder={`${project.root_dir}/export_yolo`}
-                value={outputDir}
-                onChange={(e) => setOutputDir(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                Select a directory for the exported dataset. Will be created if it doesn't exist.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -173,6 +210,21 @@ export function ExportModal() {
                 Export approved annotations only
               </Label>
             </div>
+
+            {exportFormat === 'coco' && (
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="includeSegmentation"
+                  checked={includeSegmentation}
+                  onChange={(e) => setIncludeSegmentation(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <Label htmlFor="includeSegmentation" className="cursor-pointer">
+                  Include segmentation polygons (if available)
+                </Label>
+              </div>
+            )}
 
             {error && (
               <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-sm text-red-600 dark:text-red-400">
