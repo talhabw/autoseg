@@ -194,13 +194,6 @@ export function ImageCanvas() {
 
     // In refine mode, allow clicking on the selected annotation's bbox
     if (mode === 'refine' && selectedAnnotationId) {
-      // If clicking on the annotation Rect itself (for dragging), don't add refine points
-      const targetId = (e.target as Konva.Node).id?.();
-      if (targetId === `annotation-${selectedAnnotationId}`) {
-        // User is clicking on the bbox border/fill to drag it - don't add refine point
-        return;
-      }
-
       // Get the selected annotation's bbox
       const selectedAnn = annotations.find((a) => a.id === selectedAnnotationId);
       if (!selectedAnn?.bbox) return;
@@ -431,6 +424,8 @@ export function ImageCanvas() {
                   stroke={color}
                   strokeWidth={isSelected ? 3 : 2}
                   fill={isSelected && !maskCanvases.has(ann.id) ? `${color}20` : 'transparent'}
+                  fillEnabled={mode !== 'refine' || !isSelected}
+                  hitStrokeWidth={mode === 'refine' && isSelected ? 10 : 0}
                   draggable={mode === 'refine' || (mode === 'draw' && isSelected)}
                   onClick={() => selectAnnotation(ann.id)}
                   onTap={() => selectAnnotation(ann.id)}
