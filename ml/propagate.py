@@ -432,6 +432,7 @@ class PropagateService:
         mode: Literal["peak", "dense", "auto"] = "auto",
         iou_verify: bool = True,
         iou_threshold: float = 0.3,
+        use_cached_masks: bool = False,
         **kwargs,
     ) -> Optional[PropagationResult]:
         """
