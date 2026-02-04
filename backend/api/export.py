@@ -20,6 +20,7 @@ class ExportRequest(BaseModel):
     train_split: float = 0.8
     seed: int = 42
     approved_only: bool = True
+    include_negative: bool = False  # Include unlabeled images as negative examples
 
 
 class ExportResponse(BaseModel):
@@ -50,6 +51,7 @@ async def export_yolo(request: ExportRequest):
             split={"train": request.train_split, "val": 1.0 - request.train_split},
             seed=request.seed,
             approved_only=request.approved_only,
+            include_negative=request.include_negative,
         )
 
         # Verify export
@@ -126,6 +128,7 @@ class BboxExportRequest(BaseModel):
     seed: int = 42
     approved_only: bool = True
     include_segmentation: bool = False  # COCO only: include polygon if available
+    include_negative: bool = False  # Include unlabeled images as negative examples
 
 
 class BboxExportResponse(BaseModel):
@@ -157,6 +160,7 @@ async def export_bbox(request: BboxExportRequest):
                 seed=request.seed,
                 approved_only=request.approved_only,
                 include_segmentation=request.include_segmentation,
+                include_negative=request.include_negative,
             )
         else:  # yolo-detect
             report = export_yolo_detect(
@@ -165,6 +169,7 @@ async def export_bbox(request: BboxExportRequest):
                 split=split,
                 seed=request.seed,
                 approved_only=request.approved_only,
+                include_negative=request.include_negative,
             )
 
         return BboxExportResponse(

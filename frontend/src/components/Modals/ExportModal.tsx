@@ -31,6 +31,7 @@ export function ExportModal() {
   const [seed, setSeed] = useState('42');
   const [approvedOnly, setApprovedOnly] = useState(true);
   const [includeSegmentation, setIncludeSegmentation] = useState(false);
+  const [includeNegative, setIncludeNegative] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState('');
@@ -70,6 +71,7 @@ export function ExportModal() {
           train_split: split,
           seed: parseInt(seed) || 42,
           approved_only: approvedOnly,
+          include_negative: includeNegative,
         });
       } else {
         const bboxRes = await exportBbox({
@@ -79,6 +81,7 @@ export function ExportModal() {
           seed: parseInt(seed) || 42,
           approved_only: approvedOnly,
           include_segmentation: includeSegmentation,
+          include_negative: includeNegative,
         });
         res = { ...bboxRes, is_valid: true };
       }
@@ -208,6 +211,19 @@ export function ExportModal() {
               />
               <Label htmlFor="approvedOnly" className="cursor-pointer">
                 Export approved annotations only
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="includeNegative"
+                checked={includeNegative}
+                onChange={(e) => setIncludeNegative(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <Label htmlFor="includeNegative" className="cursor-pointer">
+                Include unlabeled images as negative examples
               </Label>
             </div>
 

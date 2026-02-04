@@ -385,6 +385,7 @@ export async function exportYolo(data: {
   train_split?: number;
   seed?: number;
   approved_only?: boolean;
+  include_negative?: boolean;
 }): Promise<{
   train_images: number;
   val_images: number;
@@ -404,6 +405,7 @@ export async function exportBbox(data: {
   seed?: number;
   approved_only?: boolean;
   include_segmentation?: boolean;
+  include_negative?: boolean;
 }): Promise<{
   format: string;
   train_images: number;

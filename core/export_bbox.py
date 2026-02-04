@@ -40,6 +40,7 @@ def export_yolo_detect(
     split: dict[str, float] = None,
     seed: int = 42,
     approved_only: bool = True,
+    include_negative: bool = False,
 ) -> BboxExportReport:
     """
     Export project to YOLO detection format (bbox only).
@@ -52,6 +53,7 @@ def export_yolo_detect(
         split: Train/val split ratios, e.g., {"train": 0.8, "val": 0.2}
         seed: Random seed for reproducible splits
         approved_only: Only export approved annotations
+        include_negative: Include images without annotations as negative examples
 
     Returns:
         BboxExportReport with statistics
@@ -64,7 +66,7 @@ def export_yolo_detect(
 
     try:
         return _do_yolo_detect_export(
-            store, project, out_dir, split, seed, approved_only
+            store, project, out_dir, split, seed, approved_only, include_negative
         )
     finally:
         store.close()
@@ -77,6 +79,7 @@ def _do_yolo_detect_export(
     split: dict[str, float],
     seed: int,
     approved_only: bool,
+    include_negative: bool,
 ) -> BboxExportReport:
     """Perform YOLO-detect export."""
 
@@ -150,8 +153,30 @@ def _do_yolo_detect_export(
         stats["total_annotations"] += len(valid_annotations)
 
         if not valid_annotations:
-            stats["skipped_images"] += 1
-            continue
+            if include_negative:
+                # Include as negative example with empty label file
+                src_path = Path(image.path)
+                if not src_path.exists():
+                    warnings.append(f"Image not found: {image.path}")
+                    stats["skipped_images"] += 1
+                    continue
+
+                out_name = f"{image.id:06d}{src_path.suffix}"
+                img_out_path = out_path / "images" / subset / out_name
+                shutil.copy2(src_path, img_out_path)
+
+                # Write empty label file
+                label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
+                label_out_path.touch()  # Create empty file
+
+                if subset == "train":
+                    stats["train_images"] += 1
+                elif subset == "val":
+                    stats["val_images"] += 1
+                continue
+            else:
+                stats["skipped_images"] += 1
+                continue
 
         # Copy image
         src_path = Path(image.path)
@@ -225,6 +250,7 @@ def export_coco(
     seed: int = 42,
     approved_only: bool = True,
     include_segmentation: bool = False,
+    include_negative: bool = False,
 ) -> BboxExportReport:
     """
     Export project to COCO JSON format.
@@ -242,6 +268,7 @@ def export_coco(
         seed: Random seed for reproducible splits
         approved_only: Only export approved annotations
         include_segmentation: Include polygon segmentation if available
+        include_negative: Include images without annotations as negative examples
 
     Returns:
         BboxExportReport with statistics
@@ -254,7 +281,14 @@ def export_coco(
 
     try:
         return _do_coco_export(
-            store, project, out_dir, split, seed, approved_only, include_segmentation
+            store,
+            project,
+            out_dir,
+            split,
+            seed,
+            approved_only,
+            include_segmentation,
+            include_negative,
         )
     finally:
         store.close()
@@ -268,6 +302,7 @@ def _do_coco_export(
     seed: int,
     approved_only: bool,
     include_segmentation: bool,
+    include_negative: bool,
 ) -> BboxExportReport:
     """Perform COCO format export."""
 
@@ -363,8 +398,36 @@ def _do_coco_export(
         valid_annotations = [a for a in annotations if a.bbox_xyxy]
 
         if not valid_annotations:
-            stats["skipped_images"] += 1
-            continue
+            if include_negative:
+                # Include as negative example (image with no annotations)
+                src_path = Path(image.path)
+                if not src_path.exists():
+                    warnings.append(f"Image not found: {image.path}")
+                    stats["skipped_images"] += 1
+                    continue
+
+                out_name = f"{image.id:06d}{src_path.suffix}"
+                img_out_path = out_path / "images" / subset / out_name
+                shutil.copy2(src_path, img_out_path)
+
+                # Add image to COCO (with no annotations)
+                coco_data[subset]["images"].append(
+                    {
+                        "id": image.id,
+                        "file_name": f"{subset}/{out_name}",
+                        "width": image.width,
+                        "height": image.height,
+                    }
+                )
+
+                if subset == "train":
+                    stats["train_images"] += 1
+                elif subset == "val":
+                    stats["val_images"] += 1
+                continue
+            else:
+                stats["skipped_images"] += 1
+                continue
 
         # Copy image
         src_path = Path(image.path)
