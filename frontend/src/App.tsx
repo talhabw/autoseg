@@ -564,7 +564,7 @@ function AppContent() {
         
         // Set selected label and switch to bbox drawing mode
         useAnnotationStore.getState().selectLabel(firstMissing.labelId);
-        useUIStore.getState().setMode('bbox');
+        useUIStore.getState().setMode('draw');
         
         // Show helpful toast
         const missingNames = notFoundLabels.map(l => l.labelName).join(', ');
