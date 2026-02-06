@@ -37,7 +37,7 @@ class BboxExportReport:
 def export_yolo_detect(
     project_dir: str,
     out_dir: str,
-    split: dict[str, float] = None,
+    split: Optional[dict[str, float]] = None,
     seed: int = 42,
     approved_only: bool = True,
     include_negative: bool = False,
@@ -100,10 +100,13 @@ def _do_yolo_detect_export(
     out_path.mkdir(parents=True, exist_ok=True)
 
     # Create directories (skip images dir if labels_only)
-    for subset in split.keys():
-        if not labels_only:
+    if not labels_only:
+        for subset in split.keys():
             (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
-        (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
+            (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
+    elif not labels_colocate:
+        # Labels-only: single labels folder, no train/val split
+        (out_path / "labels").mkdir(parents=True, exist_ok=True)
 
     labels = store.list_labels(project.id)
     label_to_idx = {label.id: idx for idx, label in enumerate(labels)}
@@ -187,9 +190,7 @@ def _do_yolo_detect_export(
                     if labels_colocate:
                         label_out_path = src_path.parent / f"{label_stem}.txt"
                     else:
-                        label_out_path = (
-                            out_path / "labels" / subset / f"{label_stem}.txt"
-                        )
+                        label_out_path = out_path / "labels" / f"{label_stem}.txt"
                 else:
                     label_out_path = (
                         out_path / "labels" / subset / f"{image.id:06d}.txt"
@@ -223,7 +224,7 @@ def _do_yolo_detect_export(
             if labels_colocate:
                 label_out_path = src_path.parent / f"{label_stem}.txt"
             else:
-                label_out_path = out_path / "labels" / subset / f"{label_stem}.txt"
+                label_out_path = out_path / "labels" / f"{label_stem}.txt"
         else:
             label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
 
@@ -231,6 +232,8 @@ def _do_yolo_detect_export(
             for ann in valid_annotations:
                 class_idx = label_to_idx.get(ann.label_id, 0)
                 bbox = ann.bbox_xyxy
+                if bbox is None:
+                    continue
                 x1, y1, x2, y2 = bbox
 
                 # Convert to center + width/height, normalized
@@ -282,11 +285,12 @@ def _do_yolo_detect_export(
 def export_coco(
     project_dir: str,
     out_dir: str,
-    split: dict[str, float] = None,
+    split: Optional[dict[str, float]] = None,
     seed: int = 42,
     approved_only: bool = True,
     include_segmentation: bool = False,
     include_negative: bool = False,
+    labels_only: bool = False,
 ) -> BboxExportReport:
     """
     Export project to COCO JSON format.
@@ -305,6 +309,7 @@ def export_coco(
         approved_only: Only export approved annotations
         include_segmentation: Include polygon segmentation if available
         include_negative: Include images without annotations as negative examples
+        labels_only: Export only annotation files, skip copying images
 
     Returns:
         BboxExportReport with statistics
@@ -325,6 +330,7 @@ def export_coco(
             approved_only,
             include_segmentation,
             include_negative,
+            labels_only,
         )
     finally:
         store.close()
@@ -339,6 +345,7 @@ def _do_coco_export(
     approved_only: bool,
     include_segmentation: bool,
     include_negative: bool,
+    labels_only: bool,
 ) -> BboxExportReport:
     """Perform COCO format export."""
 
@@ -347,8 +354,9 @@ def _do_coco_export(
     out_path.mkdir(parents=True, exist_ok=True)
     (out_path / "annotations").mkdir(parents=True, exist_ok=True)
 
-    for subset in split.keys():
-        (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
+    if not labels_only:
+        for subset in split.keys():
+            (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
 
     labels = store.list_labels(project.id)
     label_to_idx = {
@@ -443,14 +451,17 @@ def _do_coco_export(
                     continue
 
                 out_name = f"{image.id:06d}{src_path.suffix}"
-                img_out_path = out_path / "images" / subset / out_name
-                shutil.copy2(src_path, img_out_path)
+                file_name = str(src_path) if labels_only else f"{subset}/{out_name}"
+
+                if not labels_only:
+                    img_out_path = out_path / "images" / subset / out_name
+                    shutil.copy2(src_path, img_out_path)
 
                 # Add image to COCO (with no annotations)
                 coco_data[subset]["images"].append(
                     {
                         "id": image.id,
-                        "file_name": f"{subset}/{out_name}",
+                        "file_name": file_name,
                         "width": image.width,
                         "height": image.height,
                     }
@@ -473,14 +484,17 @@ def _do_coco_export(
             continue
 
         out_name = f"{image.id:06d}{src_path.suffix}"
-        img_out_path = out_path / "images" / subset / out_name
-        shutil.copy2(src_path, img_out_path)
+        file_name = str(src_path) if labels_only else f"{subset}/{out_name}"
+
+        if not labels_only:
+            img_out_path = out_path / "images" / subset / out_name
+            shutil.copy2(src_path, img_out_path)
 
         # Add image to COCO
         coco_data[subset]["images"].append(
             {
                 "id": image.id,
-                "file_name": f"{subset}/{out_name}",
+                "file_name": file_name,
                 "width": image.width,
                 "height": image.height,
             }
@@ -489,6 +503,8 @@ def _do_coco_export(
         # Add annotations
         for ann in valid_annotations:
             bbox = ann.bbox_xyxy
+            if bbox is None:
+                continue
             x1, y1, x2, y2 = bbox
 
             # COCO bbox format: [x, y, width, height]

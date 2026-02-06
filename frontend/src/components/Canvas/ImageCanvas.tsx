@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Circle, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { useProjectStore } from '../../stores/projectStore';
@@ -22,8 +22,8 @@ export function ImageCanvas() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(true);
 
-  // Cache for decoded mask canvases
-  const [maskCanvases, setMaskCanvases] = useState<Map<number, HTMLCanvasElement>>(new Map());
+  // Cache for decoded mask canvases (previous ref for cleanup)
+  const prevMaskCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
 
   const { images, currentImageIndex } = useProjectStore();
   const {
@@ -50,8 +50,14 @@ export function ImageCanvas() {
   }, [labels]);
 
   // Decode masks when annotations change (skip during performance loop)
-  useEffect(() => {
-    if (isPerformanceLoopActive) return;
+  const maskCanvases = useMemo(() => {
+    if (isPerformanceLoopActive) return prevMaskCanvasesRef.current;
+
+    // Dispose previous canvases
+    prevMaskCanvasesRef.current.forEach((canvas) => {
+      canvas.width = 0;
+      canvas.height = 0;
+    });
 
     const newCanvases = new Map<number, HTMLCanvasElement>();
 
@@ -68,25 +74,27 @@ export function ImageCanvas() {
       }
     }
 
-    setMaskCanvases(newCanvases);
+    prevMaskCanvasesRef.current = newCanvases;
+    return newCanvases;
   }, [annotations, maskOpacity, getLabelColor, isPerformanceLoopActive]);
-
-  // Clear mask canvases when image changes to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      // Dispose mask canvases when image changes
-      setMaskCanvases((prevCanvases) => {
-        prevCanvases.forEach((canvas) => {
-          canvas.width = 0;
-          canvas.height = 0;
-        });
-        return new Map();
-      });
-    };
-  }, [currentImage?.id]);
 
   // Get project for cache busting
   const project = useProjectStore((s) => s.project);
+
+  const fitToView = useCallback((img: HTMLImageElement) => {
+    if (!containerRef.current) return;
+
+    const padding = 40;
+    const scaleX = (containerSize.width - padding) / img.width;
+    const scaleY = (containerSize.height - padding) / img.height;
+    const scale = Math.min(scaleX, scaleY, 1);
+
+    const x = (containerSize.width - img.width * scale) / 2;
+    const y = (containerSize.height - img.height * scale) / 2;
+
+    setStageScale(scale);
+    setStagePos({ x, y });
+  }, [containerSize]);
 
   // Load image when current image changes (skip during performance loop)
   useEffect(() => {
@@ -130,7 +138,8 @@ export function ImageCanvas() {
       img.onerror = null;
       img.src = ''; // Abort loading
     };
-  }, [currentImage?.id, project?.id, isPerformanceLoopActive]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on currentImage?.id not the full object to avoid unnecessary reloads
+  }, [currentImage?.id, project?.id, isPerformanceLoopActive, fitToView]);
 
   // Resize handler
   useEffect(() => {
@@ -160,8 +169,9 @@ export function ImageCanvas() {
 
   // Cleanup Konva Stage on unmount to release WebGL/Canvas resources
   useEffect(() => {
+    const stage = stageRef.current;
     return () => {
-      stageRef.current?.destroy();
+      stage?.destroy();
     };
   }, []);
 
@@ -177,21 +187,6 @@ export function ImageCanvas() {
     }
     transformerRef.current.getLayer()?.batchDraw();
   }, [selectedAnnotationId, mode]);
-
-  const fitToView = useCallback((img: HTMLImageElement) => {
-    if (!containerRef.current) return;
-
-    const padding = 40;
-    const scaleX = (containerSize.width - padding) / img.width;
-    const scaleY = (containerSize.height - padding) / img.height;
-    const scale = Math.min(scaleX, scaleY, 1);
-
-    const x = (containerSize.width - img.width * scale) / 2;
-    const y = (containerSize.height - img.height * scale) / 2;
-
-    setStageScale(scale);
-    setStagePos({ x, y });
-  }, [containerSize]);
 
   // Wheel zoom
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {

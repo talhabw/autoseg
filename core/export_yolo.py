@@ -105,14 +105,13 @@ def _do_export(
     out_path.mkdir(parents=True, exist_ok=True)
 
     if not labels_only:
-        # Standard export: create images and labels directories
+        # Standard export: create images and labels directories with train/val split
         for subset in split.keys():
             (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
             (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
     elif not labels_colocate:
-        # Labels-only but in output directory structure
-        for subset in split.keys():
-            (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
+        # Labels-only: single labels folder, no train/val split
+        (out_path / "labels").mkdir(parents=True, exist_ok=True)
 
     # Get labels and create mapping
     labels = store.list_labels(project.id)
@@ -215,9 +214,7 @@ def _do_export(
                     if labels_colocate:
                         label_out_path = src_path.parent / f"{src_path.stem}.txt"
                     else:
-                        label_out_path = (
-                            out_path / "labels" / subset / f"{src_path.stem}.txt"
-                        )
+                        label_out_path = out_path / "labels" / f"{src_path.stem}.txt"
                 else:
                     label_out_path = (
                         out_path / "labels" / subset / f"{image.id:06d}.txt"
@@ -253,7 +250,7 @@ def _do_export(
             if labels_colocate:
                 label_out_path = src_path.parent / f"{src_path.stem}.txt"
             else:
-                label_out_path = out_path / "labels" / subset / f"{src_path.stem}.txt"
+                label_out_path = out_path / "labels" / f"{src_path.stem}.txt"
         else:
             label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
 

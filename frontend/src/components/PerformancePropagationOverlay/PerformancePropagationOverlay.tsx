@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -5,6 +6,14 @@ import { stopAutoTracking } from '../../App';
 
 export function PerformancePropagationOverlay() {
   const performanceProgress = useUIStore((s) => s.performanceProgress);
+  const [now, setNow] = useState(Date.now);
+
+  // Update clock every second for elapsed/ETA display
+  useEffect(() => {
+    if (!performanceProgress) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [performanceProgress]);
 
   if (!performanceProgress) return null;
 
@@ -19,7 +28,7 @@ export function PerformancePropagationOverlay() {
     failedLabels,
   } = performanceProgress;
 
-  const elapsed = (Date.now() - startTime) / 1000;
+  const elapsed = (now - startTime) / 1000;
   const rate = current > 0 ? elapsed / current : 0;
   const remaining = rate > 0 ? Math.ceil((total - current) * rate) : 0;
   const percent = total > 0 ? Math.round((current / total) * 100) : 0;

@@ -44,10 +44,11 @@ let _propagationLock = false;
 let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
 let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
-let _sessionFailedImageIds = new Set<number>(); // Track failed images in current session (skip mode)
+const _sessionFailedImageIds = new Set<number>(); // Track failed images in current session (skip mode)
 let _performancePropagationActive = false; // Performance mode loop active
 
 // Export function to stop auto-tracking (used by UI components)
+// eslint-disable-next-line react-refresh/only-export-components
 export function stopAutoTracking() {
   _pendingAutoNext = false;
   _performancePropagationActive = false;
@@ -403,7 +404,8 @@ function AppContent() {
     };
 
     init();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Mount-only: reads fresh state from stores
 
   // Load annotations when image changes
   useEffect(() => {
@@ -431,14 +433,16 @@ function AppContent() {
     } else {
       clearAnnotations();
     }
-  }, [currentImage?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentImage?.id]); // Only re-run on image change; callbacks read fresh store state
 
   // Load labels when project changes
   useEffect(() => {
     if (project) {
       loadLabels();
     }
-  }, [project?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]); // Only re-run on project change
 
   // Handle segmentation
   const handleSegment = useCallback(async () => {
@@ -595,7 +599,6 @@ function AppContent() {
 
     // Track which labels failed propagation from previous image
     const failedLabels = new Set<number>();
-    let successCount = 0;
     let fallbackCount = 0;
 
     try {
@@ -721,8 +724,7 @@ function AppContent() {
             mask_rle: result.mask_rle,
             polygon: result.polygon,
           });
-          successCount++;
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error(`${logPrefix} Propagation failed for annotation:`, ann.id, err);
           // Track this label as failed for fallback attempt
           failedLabels.add(ann.label_id);
@@ -799,10 +801,11 @@ function AppContent() {
               }
 
               // Client-side batch duplicate check
+              const BBOX_IOU_THRESHOLD = 0.85;
               let isBatchDuplicate = false;
               for (const existing of propagationResults) {
                 const iou = bboxIoU(result.bbox, existing.bbox);
-                if (iou >= iouThreshold) {
+                if (iou >= BBOX_IOU_THRESHOLD) {
                   console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
                   isBatchDuplicate = true;
                   break;
@@ -823,7 +826,7 @@ function AppContent() {
               });
               fallbackCount++;
               fallbackSuccess = true;
-            } catch (err: any) {
+            } catch (err: unknown) {
               console.error(`${logPrefix} Fallback attempt ${attempt + 1} failed for label ${labelId}:`, err);
               // Try next fallback
             }
@@ -1001,6 +1004,7 @@ function AppContent() {
       setIsPropagating(false);
       _propagationLock = false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // No dependencies - reads fresh state from stores
 
   // Approve selected annotation
@@ -1249,6 +1253,7 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty deps - all callbacks are now stable and read fresh state
 
   return (

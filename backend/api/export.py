@@ -58,8 +58,11 @@ async def export_yolo(request: ExportRequest):
             labels_colocate=request.labels_colocate,
         )
 
-        # Verify export
-        is_valid, errors = verify_yolo_seg_export(request.output_dir)
+        # Verify export (labels-only export intentionally skips data.yaml/images)
+        if request.labels_only:
+            is_valid, errors = True, []
+        else:
+            is_valid, errors = verify_yolo_seg_export(request.output_dir)
 
         return ExportResponse(
             train_images=report.train_images,
