@@ -43,13 +43,15 @@ let _propagationLock = false;
 let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
 let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
+let _sessionFailedImageIds = new Set<number>(); // Track failed images in current session (skip mode)
 
 // Export function to stop auto-tracking (used by UI components)
 export function stopAutoTracking() {
   _pendingAutoNext = false;
+  _sessionFailedImageIds.clear(); // Clear failed images on stop
   // Increment request ID to cancel any in-progress propagation
   _propagationRequestId++;
-  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}`);
+  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}, cleared failed images`);
 }
 
 function AppContent() {
@@ -417,12 +419,12 @@ function AppContent() {
 
         for (const labelId of failedLabels) {
           let fallbackSuccess = false;
-          const triedImageIds: number[] = [];
+          const triedImageIds: number[] = [..._sessionFailedImageIds]; // Start with session-failed images excluded
 
           // Try up to MAX_FALLBACK_ATTEMPTS different reference images
           for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS && !fallbackSuccess; attempt++) {
             try {
-              // Find a fallback reference, excluding already-tried images
+              // Find a fallback reference, excluding already-tried images AND session-failed images
               const fallbackResult = await api.findFallbackReference(
                 labelId,
                 currentIdx + 1, // beforeImageIndex - the target image index
@@ -515,45 +517,77 @@ function AppContent() {
         }
       }
 
-      // STOP if any labels failed all fallback attempts
+      // Handle failed labels based on propagationFailureMode setting
       if (stillFailedLabels.length > 0) {
         const failedNames = stillFailedLabels.map(l => l.labelName);
-        console.log(`${logPrefix} 🛑 STOPPING: ${stillFailedLabels.length} labels failed all fallback attempts: ${failedNames.join(', ')}`);
-        setStatus(`Propagation stopped - failed to track: ${failedNames.join(', ')}`);
+        const { propagationFailureMode } = useUIStore.getState();
         
-        // Send browser notification
-        notifyPropagationFailure(failedNames);
+        console.log(`${logPrefix} ⚠️ ${stillFailedLabels.length} labels failed all fallback attempts: ${failedNames.join(', ')} (mode: ${propagationFailureMode})`);
         
-        // Show toast with details
-        const { toast } = await import('sonner');
-        toast.error('Propagation Stopped', {
-          description: `Could not track: ${failedNames.slice(0, 3).join(', ')}${failedNames.length > 3 ? ` and ${failedNames.length - 3} more` : ''}. Manual annotation required.`,
-          duration: 10000,
-        });
+        // Mark this image as failed in session (for skip mode reference exclusion)
+        _sessionFailedImageIds.add(targetImageId);
+        
+        if (propagationFailureMode === 'stop') {
+          // STOP MODE: Stop propagation, notify user, navigate to failed image
+          console.log(`${logPrefix} 🛑 STOPPING: propagationFailureMode='stop'`);
+          setStatus(`Propagation stopped - failed to track: ${failedNames.join(', ')}`);
+          
+          // Send browser notification
+          notifyPropagationFailure(failedNames);
+          
+          // Show toast with details
+          const { toast } = await import('sonner');
+          toast.error('Propagation Stopped', {
+            description: `Could not track: ${failedNames.slice(0, 3).join(', ')}${failedNames.length > 3 ? ` and ${failedNames.length - 3} more` : ''}. Manual annotation required.`,
+            duration: 10000,
+          });
 
-        // Create annotations for labels that DID succeed before stopping
-        if (propagationResults.length > 0) {
-          console.log(`${logPrefix} Creating ${propagationResults.length} successful annotations before stopping...`);
-          for (const result of propagationResults) {
-            try {
-              await api.createAnnotation({
-                image_id: targetImageId,
-                label_id: result.label_id,
-                bbox: result.bbox,
-                mask_rle: result.mask_rle,
-                polygon: result.polygon,
-                source: 'tracked',
-                status: 'pending',
-              });
-            } catch (err) {
-              console.error(`${logPrefix} Failed to create annotation:`, err);
+          // Create annotations for labels that DID succeed before stopping
+          if (propagationResults.length > 0) {
+            console.log(`${logPrefix} Creating ${propagationResults.length} successful annotations before stopping...`);
+            for (const result of propagationResults) {
+              try {
+                await api.createAnnotation({
+                  image_id: targetImageId,
+                  label_id: result.label_id,
+                  bbox: result.bbox,
+                  mask_rle: result.mask_rle,
+                  polygon: result.polygon,
+                  source: 'tracked',
+                  status: 'pending',
+                });
+              } catch (err) {
+                console.error(`${logPrefix} Failed to create annotation:`, err);
+              }
             }
           }
-        }
 
-        setIsPropagating(false);
-        _propagationLock = false;
-        return; // STOP - don't navigate to next image
+          // Navigate to the failed image so user can manually annotate
+          console.log(`${logPrefix} Navigating to failed image ${targetImageId} for manual annotation`);
+          // Find the index of the target image and navigate to it
+          const targetIdx = currentImages.findIndex(img => img.id === targetImageId);
+          if (targetIdx >= 0) {
+            useProjectStore.getState().setCurrentImageIndex(targetIdx);
+          }
+
+          setIsPropagating(false);
+          _propagationLock = false;
+          return; // STOP - don't continue to next image
+        } else {
+          // SKIP MODE: Log warning, save successful results, continue to next image
+          console.log(`${logPrefix} ⏭️ SKIPPING: propagationFailureMode='skip', continuing to next image`);
+          setStatus(`Skipped image - failed to track: ${failedNames.join(', ')}`);
+          
+          // Show a brief info toast (non-blocking)
+          const { toast } = await import('sonner');
+          toast.warning('Skipped Image', {
+            description: `Could not track: ${failedNames.slice(0, 2).join(', ')}${failedNames.length > 2 ? ` (+${failedNames.length - 2})` : ''}`,
+            duration: 3000,
+          });
+          
+          // Still save the successful propagations for this image
+          // (fall through to annotation creation below)
+        }
       }
 
       // Check if request was superseded before creating annotations

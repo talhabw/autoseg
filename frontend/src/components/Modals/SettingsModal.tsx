@@ -45,6 +45,8 @@ export function SettingsModal() {
     setIouVerify,
     iouThreshold,
     setIouThreshold,
+    propagationFailureMode,
+    setPropagationFailureMode,
     samMaskThreshold,
     setSamMaskThreshold,
     samMinRegionArea,
@@ -335,6 +337,25 @@ export function SettingsModal() {
                   </p>
                 </div>
               )}
+
+              <div className="space-y-2">
+                <Label>On Propagation Failure</Label>
+                <Select
+                  value={propagationFailureMode}
+                  onValueChange={(val) => setPropagationFailureMode(val as 'stop' | 'skip')}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select behavior" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stop">Stop and notify</SelectItem>
+                    <SelectItem value="skip">Skip and continue</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Stop: Stops tracking and shows the failed image. Skip: Continues to next image, excluding failed ones from future references.
+                </p>
+              </div>
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">

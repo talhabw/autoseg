@@ -25,6 +25,7 @@ interface UIState {
   iouVerify: boolean; // Whether to verify results against dense prediction
   iouThreshold: number; // Minimum IoU with dense prediction to accept
   autoNext: boolean; // Auto-advance to next image after propagation
+  propagationFailureMode: 'stop' | 'skip'; // 'stop' = stop on failure, 'skip' = skip failed image and continue
   
   // SAM settings
   samMaskThreshold: number; // Logit threshold for mask generation (-2.0 to 2.0)
@@ -76,6 +77,7 @@ interface UIState {
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
   setAutoNext: (enabled: boolean) => void;
+  setPropagationFailureMode: (mode: 'stop' | 'skip') => void;
   
   // SAM settings actions
   setSamMaskThreshold: (threshold: number) => Promise<void>;
@@ -106,6 +108,7 @@ export const useUIStore = create<UIState>()(
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
       autoNext: false, // Default: manual navigation
+      propagationFailureMode: 'stop', // Default: stop on failure (safer)
       
       // SAM settings
       samMaskThreshold: 0.0, // Default: 0.0 (standard logit threshold)
@@ -213,6 +216,7 @@ export const useUIStore = create<UIState>()(
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
       setAutoNext: (enabled) => set({ autoNext: enabled }),
+      setPropagationFailureMode: (mode) => set({ propagationFailureMode: mode }),
 
       // SAM settings - sync with backend
       setSamMaskThreshold: async (threshold) => {
