@@ -12,6 +12,17 @@ export type ReviewFilter = 'all' | 'pending' | 'approved' | 'rejected';
 // Keys for localStorage
 const STORAGE_KEY = 'autoseg-ui-settings';
 
+interface PerformanceProgress {
+  current: number;
+  total: number;
+  successCount: number;
+  failedCount: number;
+  skippedCount: number;
+  startTime: number;
+  failedImageIndex: number | null;
+  failedLabels: string[];
+}
+
 interface UIState {
   // Persisted settings
   lastProjectPath: string | null;
@@ -26,6 +37,9 @@ interface UIState {
   iouThreshold: number; // Minimum IoU with dense prediction to accept
   autoNext: boolean; // Auto-advance to next image after propagation
   propagationFailureMode: 'stop' | 'skip'; // 'stop' = stop on failure, 'skip' = skip failed image and continue
+  
+  // Performance mode settings
+  performanceMode: boolean; // When true, skip UI updates during auto-propagation
   
   // SAM settings
   samMaskThreshold: number; // Logit threshold for mask generation (-2.0 to 2.0)
@@ -42,6 +56,7 @@ interface UIState {
   propagationLoaded: boolean;
   isLoadingModel: boolean;
   isPropagating: boolean;  // Track if propagation is in progress
+  performanceProgress: PerformanceProgress | null; // Progress tracking for batch propagation
   
   // Modal states
   showCreateProjectModal: boolean;
@@ -90,6 +105,11 @@ interface UIState {
   setStatusMessage: (message: string) => void;
   setIsPropagating: (value: boolean) => void;
   
+  // Performance mode actions
+  setPerformanceMode: (enabled: boolean) => void;
+  setPerformanceProgress: (progress: PerformanceProgress | null) => void;
+  updatePerformanceProgress: (update: Partial<PerformanceProgress>) => void;
+  
   addToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', duration?: number) => void;
 }
 
@@ -110,6 +130,9 @@ export const useUIStore = create<UIState>()(
       autoNext: false, // Default: manual navigation
       propagationFailureMode: 'stop', // Default: stop on failure (safer)
       
+      // Performance mode settings
+      performanceMode: false, // Default: normal mode with UI updates
+      
       // SAM settings
       samMaskThreshold: 0.0, // Default: 0.0 (standard logit threshold)
       samMultimaskOutput: true, // Default: generate multiple candidates
@@ -125,6 +148,7 @@ export const useUIStore = create<UIState>()(
       propagationLoaded: false,
       isLoadingModel: false,
       isPropagating: false,
+      performanceProgress: null,
       showCreateProjectModal: false,
       showOpenProjectModal: false,
       showExportModal: false,
@@ -274,6 +298,15 @@ export const useUIStore = create<UIState>()(
       setStatusMessage: (message) => set({ statusMessage: message }),
       setIsPropagating: (value) => set({ isPropagating: value }),
       
+      // Performance mode actions
+      setPerformanceMode: (enabled) => set({ performanceMode: enabled }),
+      setPerformanceProgress: (progress) => set({ performanceProgress: progress }),
+      updatePerformanceProgress: (update) => set((state) => ({
+        performanceProgress: state.performanceProgress 
+          ? { ...state.performanceProgress, ...update }
+          : null,
+      })),
+      
       addToast: (message, type = 'info', duration) => {
         const options = duration ? { duration } : undefined;
         if (type === 'success') {
@@ -302,6 +335,7 @@ export const useUIStore = create<UIState>()(
         iouVerify: state.iouVerify,
         iouThreshold: state.iouThreshold,
         autoNext: state.autoNext,
+        performanceMode: state.performanceMode,
       }),
     }
   )

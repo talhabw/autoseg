@@ -94,6 +94,17 @@ export function getThumbnailUrl(imageId: number, size = 200, cacheBuster?: strin
   return url;
 }
 
+export function getOptimizedImageUrl(
+  imageId: number,
+  maxWidth = 2048,
+  quality = 85,
+  cacheBuster?: string | number
+): string {
+  let url = `/api/images/${imageId}/optimized?max_width=${maxWidth}&quality=${quality}`;
+  if (cacheBuster) url += `&v=${cacheBuster}`;
+  return url;
+}
+
 export async function getImagesWithStatus(status: string): Promise<{
   status: string;
   image_indices: number[];

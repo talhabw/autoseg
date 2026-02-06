@@ -4,7 +4,7 @@ import Konva from 'konva';
 import { useProjectStore } from '../../stores/projectStore';
 import { useAnnotationStore } from '../../stores/annotationStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getImageUrl } from '../../api/client';
+import { getOptimizedImageUrl } from '../../api/client';
 import { maskToCanvas, type RLEMask } from '../../utils/rle';
 import type { Annotation, DrawingBbox } from '../../types';
 
@@ -37,9 +37,11 @@ export function ImageCanvas() {
     refinePoints,
     addRefinePoint,
   } = useAnnotationStore();
-  const { mode, maskOpacity } = useUIStore();
+  const { mode, maskOpacity, performanceProgress } = useUIStore();
 
   const currentImage = images[currentImageIndex];
+  // Skip heavy rendering when performance propagation is running (no failed image = loop active)
+  const isPerformanceLoopActive = performanceProgress !== null && performanceProgress.failedImageIndex === null;
 
   // Get label color
   const getLabelColor = useCallback((labelId: number): string => {
@@ -47,8 +49,10 @@ export function ImageCanvas() {
     return label?.color || '#888888';
   }, [labels]);
 
-  // Decode masks when annotations change
+  // Decode masks when annotations change (skip during performance loop)
   useEffect(() => {
+    if (isPerformanceLoopActive) return;
+
     const newCanvases = new Map<number, HTMLCanvasElement>();
 
     for (const ann of annotations) {
@@ -65,32 +69,68 @@ export function ImageCanvas() {
     }
 
     setMaskCanvases(newCanvases);
-  }, [annotations, maskOpacity, getLabelColor]);
+  }, [annotations, maskOpacity, getLabelColor, isPerformanceLoopActive]);
+
+  // Clear mask canvases when image changes to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Dispose mask canvases when image changes
+      setMaskCanvases((prevCanvases) => {
+        prevCanvases.forEach((canvas) => {
+          canvas.width = 0;
+          canvas.height = 0;
+        });
+        return new Map();
+      });
+    };
+  }, [currentImage?.id]);
 
   // Get project for cache busting
   const project = useProjectStore((s) => s.project);
 
-  // Load image when current image changes
+  // Load image when current image changes (skip during performance loop)
   useEffect(() => {
-    if (!currentImage) {
-      setImage(null);
-      setIsImageLoading(false);
+    if (!currentImage || isPerformanceLoopActive) {
+      if (!currentImage) {
+        setImage(null);
+        setIsImageLoading(false);
+      }
       return;
     }
 
     // Set loading state - this will hide stale annotations
     setIsImageLoading(true);
+    let cancelled = false;
 
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
-    // Use project.id as cache buster to prevent stale images when switching projects
-    img.src = getImageUrl(currentImage.id, project?.id);
+    // Use optimized image endpoint for faster loading
+    img.src = getOptimizedImageUrl(currentImage.id, 2048, 85, project?.id);
+
     img.onload = () => {
-      setImage(img);
-      fitToView(img);
-      setIsImageLoading(false);
+      if (!cancelled) {
+        setImage(img);
+        fitToView(img);
+        setIsImageLoading(false);
+      }
     };
-  }, [currentImage?.id, project?.id]);
+
+    img.onerror = () => {
+      console.error('Failed to load image:', currentImage.id);
+      if (!cancelled) {
+        setImage(null);
+        setIsImageLoading(false);
+      }
+    };
+
+    // Cleanup: abort image loading on unmount/change
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+      img.src = ''; // Abort loading
+    };
+  }, [currentImage?.id, project?.id, isPerformanceLoopActive]);
 
   // Resize handler
   useEffect(() => {
@@ -115,6 +155,13 @@ export function ImageCanvas() {
 
     return () => {
       resizeObserver.disconnect();
+    };
+  }, []);
+
+  // Cleanup Konva Stage on unmount to release WebGL/Canvas resources
+  useEffect(() => {
+    return () => {
+      stageRef.current?.destroy();
     };
   }, []);
 

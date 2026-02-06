@@ -54,6 +54,8 @@ export function SettingsModal() {
     samKeepLargestRegion,
     setSamKeepLargestRegion,
     samLoaded,
+    performanceMode,
+    setPerformanceMode,
     addToast,
   } = useUIStore();
 
@@ -424,6 +426,32 @@ export function SettingsModal() {
                   <Label htmlFor="stop-tracking">Stop tracking on size mismatch</Label>
                   <p className="text-xs text-muted-foreground">
                     If enabled, tracking halts if the object size deviates beyond the min/max thresholds. Safer but less robust to occlusion.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Performance Settings */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+              Performance
+              <Separator className="flex-1" />
+            </h3>
+
+            <div className="space-y-6 pl-2">
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="performance-mode"
+                  checked={performanceMode}
+                  onCheckedChange={setPerformanceMode}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="performance-mode">Performance Propagation Mode</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, auto-propagation skips UI rendering for each frame and runs a tight API-only loop. 
+                    The canvas only refreshes when propagation fails and requires your input. 
+                    Dramatically faster for large datasets.
                   </p>
                 </div>
               </div>
