@@ -24,6 +24,7 @@ interface ProjectState {
   nextImage: () => void;
   prevImage: () => void;
   tryOpenLastProject: () => Promise<boolean>;
+  resyncImages: () => Promise<{ added: number; removed: number }>;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -160,6 +161,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       // Clear invalid last project path
       useUIStore.getState().setLastProjectPath(null);
       return false;
+    }
+  },
+
+  resyncImages: async () => {
+    const { project } = get();
+    if (!project) throw new Error('No project loaded');
+
+    try {
+      const result = await api.resyncImages();
+
+      // Reload images to get updated list
+      await get().loadImages();
+
+      // Reset index if current is out of bounds
+      const { images, currentImageIndex } = get();
+      if (currentImageIndex >= images.length) {
+        set({ currentImageIndex: Math.max(0, images.length - 1) });
+      }
+
+      return { added: result.added, removed: result.removed };
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Failed to resync images' });
+      throw err;
     }
   },
 }));

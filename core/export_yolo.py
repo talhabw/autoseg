@@ -43,6 +43,8 @@ def export_yolo_seg(
     seed: int = 42,
     approved_only: bool = True,
     include_negative: bool = False,
+    labels_only: bool = False,
+    labels_colocate: bool = True,
 ) -> ExportReport:
     """
     Export project to YOLO segmentation format.
@@ -54,6 +56,8 @@ def export_yolo_seg(
         seed: Random seed for reproducible splits
         approved_only: Only export approved annotations
         include_negative: Include images without annotations as negative examples
+        labels_only: Export only label files, skip copying images
+        labels_colocate: When labels_only=True, place labels next to original images
 
     Returns:
         ExportReport with statistics
@@ -67,7 +71,15 @@ def export_yolo_seg(
 
     try:
         return _do_export(
-            store, project, out_dir, split, seed, approved_only, include_negative
+            store,
+            project,
+            out_dir,
+            split,
+            seed,
+            approved_only,
+            include_negative,
+            labels_only,
+            labels_colocate,
         )
     finally:
         store.close()
@@ -81,6 +93,8 @@ def _do_export(
     seed: int,
     approved_only: bool,
     include_negative: bool,
+    labels_only: bool = False,
+    labels_colocate: bool = True,
 ) -> ExportReport:
     """Perform the actual export."""
 
@@ -90,9 +104,15 @@ def _do_export(
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    for subset in split.keys():
-        (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
-        (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
+    if not labels_only:
+        # Standard export: create images and labels directories
+        for subset in split.keys():
+            (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
+            (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
+    elif not labels_colocate:
+        # Labels-only but in output directory structure
+        for subset in split.keys():
+            (out_path / "labels" / subset).mkdir(parents=True, exist_ok=True)
 
     # Get labels and create mapping
     labels = store.list_labels(project.id)
@@ -185,12 +205,25 @@ def _do_export(
                     stats["skipped_images"] += 1
                     continue
 
-                out_name = f"{image.id:06d}{src_path.suffix}"
-                img_out_path = out_path / "images" / subset / out_name
-                shutil.copy2(src_path, img_out_path)
+                if not labels_only:
+                    out_name = f"{image.id:06d}{src_path.suffix}"
+                    img_out_path = out_path / "images" / subset / out_name
+                    shutil.copy2(src_path, img_out_path)
+
+                # Determine label output path
+                if labels_only:
+                    if labels_colocate:
+                        label_out_path = src_path.parent / f"{src_path.stem}.txt"
+                    else:
+                        label_out_path = (
+                            out_path / "labels" / subset / f"{src_path.stem}.txt"
+                        )
+                else:
+                    label_out_path = (
+                        out_path / "labels" / subset / f"{image.id:06d}.txt"
+                    )
 
                 # Write empty label file
-                label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
                 label_out_path.touch()  # Create empty file
 
                 if subset == "train":
@@ -202,21 +235,27 @@ def _do_export(
                 stats["skipped_images"] += 1
                 continue
 
-        # Copy image
+        # Copy image (unless labels_only mode)
         src_path = Path(image.path)
         if not src_path.exists():
             warnings.append(f"Image not found: {image.path}")
             stats["skipped_images"] += 1
             continue
 
-        # Determine output filename (keep original extension)
-        out_name = f"{image.id:06d}{src_path.suffix}"
-        img_out_path = out_path / "images" / subset / out_name
+        if not labels_only:
+            # Determine output filename (keep original extension)
+            out_name = f"{image.id:06d}{src_path.suffix}"
+            img_out_path = out_path / "images" / subset / out_name
+            shutil.copy2(src_path, img_out_path)
 
-        shutil.copy2(src_path, img_out_path)
-
-        # Write label file
-        label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
+        # Determine label output path
+        if labels_only:
+            if labels_colocate:
+                label_out_path = src_path.parent / f"{src_path.stem}.txt"
+            else:
+                label_out_path = out_path / "labels" / subset / f"{src_path.stem}.txt"
+        else:
+            label_out_path = out_path / "labels" / subset / f"{image.id:06d}.txt"
 
         with open(label_out_path, "w") as f:
             for ann in valid_annotations:
@@ -252,18 +291,19 @@ def _do_export(
         elif subset == "val":
             stats["val_images"] += 1
 
-    # Write data.yaml
-    data_yaml_path = out_path / "data.yaml"
-    with open(data_yaml_path, "w") as f:
-        f.write(f"# AutoSeg export - {project.name}\n")
-        f.write(f"path: {out_path.absolute()}\n")
-        f.write(f"train: images/train\n")
-        f.write(f"val: images/val\n")
-        f.write(f"\n")
-        f.write(f"# Classes\n")
-        f.write(f"names:\n")
-        for idx, name in enumerate(label_names):
-            f.write(f"  {idx}: {name}\n")
+    # Write data.yaml (only when not labels_only mode)
+    if not labels_only:
+        data_yaml_path = out_path / "data.yaml"
+        with open(data_yaml_path, "w") as f:
+            f.write(f"# AutoSeg export - {project.name}\n")
+            f.write(f"path: {out_path.absolute()}\n")
+            f.write(f"train: images/train\n")
+            f.write(f"val: images/val\n")
+            f.write(f"\n")
+            f.write(f"# Classes\n")
+            f.write(f"names:\n")
+            for idx, name in enumerate(label_names):
+                f.write(f"  {idx}: {name}\n")
 
     # Add warning if many annotations lack polygons
     if stats["annotations_without_polygon"] > 0:

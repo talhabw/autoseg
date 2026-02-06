@@ -21,6 +21,8 @@ class ExportRequest(BaseModel):
     seed: int = 42
     approved_only: bool = True
     include_negative: bool = False  # Include unlabeled images as negative examples
+    labels_only: bool = False  # Export only label files (no image copying)
+    labels_colocate: bool = True  # Place label files next to original images
 
 
 class ExportResponse(BaseModel):
@@ -52,6 +54,8 @@ async def export_yolo(request: ExportRequest):
             seed=request.seed,
             approved_only=request.approved_only,
             include_negative=request.include_negative,
+            labels_only=request.labels_only,
+            labels_colocate=request.labels_colocate,
         )
 
         # Verify export
@@ -129,6 +133,8 @@ class BboxExportRequest(BaseModel):
     approved_only: bool = True
     include_segmentation: bool = False  # COCO only: include polygon if available
     include_negative: bool = False  # Include unlabeled images as negative examples
+    labels_only: bool = False  # Export only label/annotation files (no image copying)
+    labels_colocate: bool = True  # YOLO-detect only: place labels next to images
 
 
 class BboxExportResponse(BaseModel):
@@ -161,6 +167,7 @@ async def export_bbox(request: BboxExportRequest):
                 approved_only=request.approved_only,
                 include_segmentation=request.include_segmentation,
                 include_negative=request.include_negative,
+                labels_only=request.labels_only,
             )
         else:  # yolo-detect
             report = export_yolo_detect(
@@ -170,6 +177,8 @@ async def export_bbox(request: BboxExportRequest):
                 seed=request.seed,
                 approved_only=request.approved_only,
                 include_negative=request.include_negative,
+                labels_only=request.labels_only,
+                labels_colocate=request.labels_colocate,
             )
 
         return BboxExportResponse(

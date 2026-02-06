@@ -1,4 +1,5 @@
 import { useUIStore, type EmbedModel } from '../../stores/uiStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import type { PropagationMode } from '../../types';
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { RefreshCw } from 'lucide-react';
 
 export function SettingsModal() {
   const {
@@ -45,16 +47,18 @@ export function SettingsModal() {
     setIouThreshold,
     samMaskThreshold,
     setSamMaskThreshold,
-    samMultimaskOutput,
-    setSamMultimaskOutput,
     samMinRegionArea,
     setSamMinRegionArea,
     samKeepLargestRegion,
     setSamKeepLargestRegion,
     samLoaded,
+    addToast,
   } = useUIStore();
 
+  const { resyncImages, project } = useProjectStore();
+
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     if (showSettingsModal) {
@@ -63,6 +67,23 @@ export function SettingsModal() {
       }).catch(console.error);
     }
   }, [showSettingsModal]);
+
+  const handleRefreshImages = async () => {
+    setIsRefreshing(true);
+    try {
+      const result = await resyncImages();
+      if (result.added > 0 || result.removed > 0) {
+        addToast(`Updated image list: +${result.added} new, -${result.removed} removed`, 'success');
+      } else {
+        addToast('Image list is up to date', 'info');
+      }
+    } catch (err) {
+      addToast('Failed to refresh images', 'error');
+      console.error('Failed to refresh images:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // However, since we're using the store to toggle visibility, we can just pass `open={showSettingsModal}` and `onOpenChange={setShowSettingsModal}`
   // if (!showSettingsModal) return null; // Logic handled by Dialog open prop
@@ -75,6 +96,36 @@ export function SettingsModal() {
         </DialogHeader>
 
         <div className="space-y-8 py-4">
+
+          {/* Project Settings */}
+          {project && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+                Project
+                <Separator className="flex-1" />
+              </h3>
+
+              <div className="space-y-3 pl-2">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label>Refresh Image List</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Scan the image directory for new or removed files.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshImages}
+                    disabled={isRefreshing}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    {isRefreshing ? 'Scanning...' : 'Refresh'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Display Settings */}
           <div className="space-y-4">

@@ -54,6 +54,18 @@ export async function setSetting(key: string, value: string): Promise<void> {
   await api.put(`/projects/settings/${key}`, null, { params: { value } });
 }
 
+export interface ResyncImagesResult {
+  added: number;
+  removed: number;
+  unchanged: number;
+  total: number;
+}
+
+export async function resyncImages(): Promise<ResyncImagesResult> {
+  const response = await api.post<ResyncImagesResult>('/projects/resync-images');
+  return response.data;
+}
+
 // ==================== Images ====================
 
 export async function listImages(): Promise<ImageRecord[]> {
@@ -165,12 +177,14 @@ export interface FallbackReferenceResult {
 export async function findFallbackReference(
   labelId: number,
   beforeImageIndex: number,
-  projectId: number
+  projectId: number,
+  excludeImageIds?: number[]
 ): Promise<FallbackReferenceResult> {
   const response = await api.get<FallbackReferenceResult>(`/annotations/fallback/${labelId}`, {
     params: {
       before_image_index: beforeImageIndex,
       project_id: projectId,
+      exclude_image_ids: excludeImageIds?.join(','),
     },
   });
   return response.data;

@@ -12,6 +12,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { useProjectStore } from './stores/projectStore';
 import { useAnnotationStore } from './stores/annotationStore';
 import { useUIStore } from './stores/uiStore';
+import { useNotifications } from './hooks/useNotifications';
 import * as api from './api/client';
 
 const queryClient = new QueryClient();
@@ -63,6 +64,8 @@ function AppContent() {
     setStatusMessage,
     checkModelStatus,
   } = useUIStore();
+
+  const { requestPermission, notifyPropagationFailure } = useNotifications();
 
   const currentImage = images[currentImageIndex];
 
@@ -116,7 +119,7 @@ function AppContent() {
 
   // Handle segmentation
   const handleSegment = useCallback(async () => {
-    const { selectedAnnotationId: selectedAnn, annotations, refinePoints: points, clearRefinePoints: clearPoints } = useAnnotationStore.getState();
+    const { selectedAnnotationId: selectedAnn, annotations, refinePoints: points } = useAnnotationStore.getState();
     const { images: currentImages, currentImageIndex: currentIdx } = useProjectStore.getState();
     const currentImg = currentImages[currentIdx];
 
@@ -196,6 +199,12 @@ function AppContent() {
     setIsPropagating(true);
 
     console.log(`${logPrefix} ✅ Lock acquired, requestId=${currentRequestId}`);
+
+    // Request notification permission early (non-blocking)
+    // This allows us to notify the user if propagation fails
+    requestPermission().catch(() => {
+      console.log(`${logPrefix} Notification permission not granted (non-critical)`);
+    });
 
     // Read fresh state from stores to avoid closure issues
     const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext, project } = useProjectStore.getState();
@@ -397,101 +406,154 @@ function AppContent() {
         }
       }
 
-      // Try fallback for failed labels (if we have a project)
+      // Try fallback for failed labels with multiple attempts (if we have a project)
+      // MAX_FALLBACK_ATTEMPTS = 2 means: try up to 2 different earlier images per failed label
+      const MAX_FALLBACK_ATTEMPTS = 2;
+      const stillFailedLabels: { labelId: number; labelName: string }[] = [];
+
       if (failedLabels.size > 0 && project) {
-        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels...`);
+        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels (up to ${MAX_FALLBACK_ATTEMPTS} attempts each)...`);
         setStatus(`Finding fallback references for ${failedLabels.size} labels...`);
 
         for (const labelId of failedLabels) {
-          try {
-            // Find a fallback reference annotation (approved annotation from earlier images)
-            const fallbackResult = await api.findFallbackReference(
-              labelId,
-              currentIdx + 1, // beforeImageIndex - the target image index
-              project.id
-            );
+          let fallbackSuccess = false;
+          const triedImageIds: number[] = [];
 
-            if (!fallbackResult.found || !fallbackResult.annotation) {
-              console.log(`${logPrefix} No fallback found for label ${labelId}`);
-              // Don't spam toasts - summary will show failed count
-              continue;
-            }
+          // Try up to MAX_FALLBACK_ATTEMPTS different reference images
+          for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS && !fallbackSuccess; attempt++) {
+            try {
+              // Find a fallback reference, excluding already-tried images
+              const fallbackResult = await api.findFallbackReference(
+                labelId,
+                currentIdx + 1, // beforeImageIndex - the target image index
+                project.id,
+                triedImageIds.length > 0 ? triedImageIds : undefined
+              );
 
-            console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index}`);
-
-            // Get settings again
-            const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
-
-            // Propagate from the fallback reference
-            const result = await api.propagateAdvanced(
-              fallbackResult.annotation.image_id,
-              targetImageId,
-              fallbackResult.annotation.id,
-              {
-                mode: propagationMode,
-                iouVerify,
-                iouThreshold,
-                useCachedMasks: true,
-                sizeMinRatio,
-                sizeMaxRatio,
-                stopOnSizeMismatch,
-                topK,
-                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
+              if (!fallbackResult.found || !fallbackResult.annotation) {
+                console.log(`${logPrefix} No fallback found for label ${labelId} (attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS})`);
+                break; // No more fallbacks available
               }
-            );
 
-            if (result.duplicate_skipped) {
-              // Check if it's because the object matched a different class
-              if (result.conflicting_label_name) {
-                const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
-                const sourceLabelName = sourceLabel?.name || `Label ${labelId}`;
-                console.log(`${logPrefix} Fallback object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}"`);
-                // Only add if not already in notFoundLabels
-                if (!notFoundLabels.some(l => l.labelId === labelId)) {
-                  notFoundLabels.push({ labelId, labelName: sourceLabelName });
+              // Track this image so we don't try it again
+              triedImageIds.push(fallbackResult.annotation.image_id);
+              console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index} (attempt ${attempt + 1})`);
+
+              // Get settings again
+              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+
+              // Propagate from the fallback reference
+              const result = await api.propagateAdvanced(
+                fallbackResult.annotation.image_id,
+                targetImageId,
+                fallbackResult.annotation.id,
+                {
+                  mode: propagationMode,
+                  iouVerify,
+                  iouThreshold,
+                  useCachedMasks: true,
+                  sizeMinRatio,
+                  sizeMaxRatio,
+                  stopOnSizeMismatch,
+                  topK,
+                  skipDuplicateThreshold: 0.9,
                 }
-              } else {
-                console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
-              }
-              duplicateSkipCount++;
-              continue;
-            }
+              );
 
-            // Client-side batch duplicate check for fallback results too
-            let isBatchDuplicate = false;
-            for (const existing of propagationResults) {
-              const iou = bboxIoU(result.bbox, existing.bbox);
-              if (iou >= BBOX_IOU_THRESHOLD) {
-                console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
-                isBatchDuplicate = true;
-                break;
+              if (result.duplicate_skipped) {
+                if (result.conflicting_label_name) {
+                  const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
+                  const sourceLabelName = sourceLabel?.name || `Label ${labelId}`;
+                  console.log(`${logPrefix} Fallback object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}" (attempt ${attempt + 1})`);
+                  // Try next fallback
+                  continue;
+                } else {
+                  console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+                }
+                duplicateSkipCount++;
+                fallbackSuccess = true; // Consider duplicate as "handled"
+                continue;
               }
-            }
-            if (isBatchDuplicate) {
-              duplicateSkipCount++;
-              continue;
-            }
 
-            console.log(`${logPrefix} Fallback propagation success for label ${labelId}`);
-            propagationResults.push({
-              label_id: labelId,
-              bbox: result.bbox,
-              mask_rle: result.mask_rle,
-              polygon: result.polygon,
-            });
-            fallbackCount++;
-          } catch (err: any) {
-            console.error(`${logPrefix} Fallback propagation failed for label ${labelId}:`, err);
-            // Don't show toast for each failure - just log it
-            // We'll continue to next image anyway
+              // Client-side batch duplicate check
+              let isBatchDuplicate = false;
+              for (const existing of propagationResults) {
+                const iou = bboxIoU(result.bbox, existing.bbox);
+                if (iou >= iouThreshold) {
+                  console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
+                  isBatchDuplicate = true;
+                  break;
+                }
+              }
+              if (isBatchDuplicate) {
+                duplicateSkipCount++;
+                fallbackSuccess = true;
+                continue;
+              }
+
+              console.log(`${logPrefix} ✅ Fallback propagation success for label ${labelId} (attempt ${attempt + 1})`);
+              propagationResults.push({
+                label_id: labelId,
+                bbox: result.bbox,
+                mask_rle: result.mask_rle,
+                polygon: result.polygon,
+              });
+              fallbackCount++;
+              fallbackSuccess = true;
+            } catch (err: any) {
+              console.error(`${logPrefix} Fallback attempt ${attempt + 1} failed for label ${labelId}:`, err);
+              // Try next fallback
+            }
+          }
+
+          // If all fallback attempts failed, track this label
+          if (!fallbackSuccess) {
+            const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
+            const labelName = sourceLabel?.name || `Label ${labelId}`;
+            stillFailedLabels.push({ labelId, labelName });
           }
         }
       }
 
-      // Log summary of failures (but don't stop)
-      const totalFailed = failedLabels.size - fallbackCount;
-      if (totalFailed > 0) {
-        console.log(`${logPrefix} ⚠️ ${totalFailed} labels failed (no fallback found), continuing anyway`);
+      // STOP if any labels failed all fallback attempts
+      if (stillFailedLabels.length > 0) {
+        const failedNames = stillFailedLabels.map(l => l.labelName);
+        console.log(`${logPrefix} 🛑 STOPPING: ${stillFailedLabels.length} labels failed all fallback attempts: ${failedNames.join(', ')}`);
+        setStatus(`Propagation stopped - failed to track: ${failedNames.join(', ')}`);
+        
+        // Send browser notification
+        notifyPropagationFailure(failedNames);
+        
+        // Show toast with details
+        const { toast } = await import('sonner');
+        toast.error('Propagation Stopped', {
+          description: `Could not track: ${failedNames.slice(0, 3).join(', ')}${failedNames.length > 3 ? ` and ${failedNames.length - 3} more` : ''}. Manual annotation required.`,
+          duration: 10000,
+        });
+
+        // Create annotations for labels that DID succeed before stopping
+        if (propagationResults.length > 0) {
+          console.log(`${logPrefix} Creating ${propagationResults.length} successful annotations before stopping...`);
+          for (const result of propagationResults) {
+            try {
+              await api.createAnnotation({
+                image_id: targetImageId,
+                label_id: result.label_id,
+                bbox: result.bbox,
+                mask_rle: result.mask_rle,
+                polygon: result.polygon,
+                source: 'tracked',
+                status: 'pending',
+              });
+            } catch (err) {
+              console.error(`${logPrefix} Failed to create annotation:`, err);
+            }
+          }
+        }
+
+        setIsPropagating(false);
+        _propagationLock = false;
+        return; // STOP - don't navigate to next image
       }
 
       // Check if request was superseded before creating annotations
@@ -529,6 +591,7 @@ function AppContent() {
       }
 
       // Build summary message
+      const totalFailed = sourceAnnotations.length - propagationResults.length - duplicateSkipCount;
       let message = `Tracked ${propagationResults.length}/${sourceAnnotations.length}`;
       if (fallbackCount > 0) {
         message += ` (${fallbackCount} via fallback)`;

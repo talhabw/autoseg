@@ -3,6 +3,7 @@ Projects API endpoints
 """
 
 import os
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -78,7 +79,7 @@ class OpenProjectRequest(BaseModel):
 
 @router.post("/open", response_model=ProjectResponse)
 async def open_project(request: OpenProjectRequest):
-    """Open an existing project."""
+    """Open an existing project and resync images."""
     global _current_store, _current_project
 
     if not os.path.exists(request.project_dir):
@@ -92,6 +93,21 @@ async def open_project(request: OpenProjectRequest):
         project = ProjectStore.load_project(request.project_dir)
         _current_store = ProjectStore(project.db_path)
         _current_project = project
+
+        # Auto-resync images on open
+        settings = json.loads(project.settings_json) if project.settings_json else {}
+        image_dir = settings.get("image_dir")
+
+        if image_dir and os.path.exists(image_dir):
+            try:
+                resync_result = _current_store.resync_images(project.id, image_dir)
+                if resync_result["added"] > 0 or resync_result["removed"] > 0:
+                    print(
+                        f"Resynced images: +{resync_result['added']}, -{resync_result['removed']}"
+                    )
+            except Exception as e:
+                print(f"Warning: Image resync failed: {e}")
+
         return ProjectResponse.from_project(project, _current_store)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -131,3 +147,51 @@ async def set_setting(key: str, value: str):
     store = get_store()
     store.set_setting(key, value)
     return {"key": key, "value": value}
+
+
+class ResyncImagesResponse(BaseModel):
+    added: int
+    removed: int
+    unchanged: int
+    total: int
+
+
+@router.post("/resync-images", response_model=ResyncImagesResponse)
+async def resync_images():
+    """
+    Rescan the image directory and update the database.
+
+    - Adds new images found in the directory
+    - Removes records for images that no longer exist
+    - Preserves existing annotations for unchanged images
+    """
+    store = get_store()
+    project = get_project()
+
+    # Get image_dir from project settings
+    settings = json.loads(project.settings_json) if project.settings_json else {}
+    image_dir = settings.get("image_dir")
+
+    if not image_dir:
+        raise HTTPException(
+            status_code=400,
+            detail="Project does not have an image directory configured",
+        )
+
+    if not os.path.exists(image_dir):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Image directory not found: {image_dir}",
+        )
+
+    try:
+        result = store.resync_images(project.id, image_dir)
+        total = store.get_image_count(project.id)
+        return ResyncImagesResponse(
+            added=result["added"],
+            removed=result["removed"],
+            unchanged=result["unchanged"],
+            total=total,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
