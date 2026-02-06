@@ -32,6 +32,8 @@ export function ExportModal() {
   const [approvedOnly, setApprovedOnly] = useState(true);
   const [includeSegmentation, setIncludeSegmentation] = useState(false);
   const [includeNegative, setIncludeNegative] = useState(false);
+  const [labelsOnly, setLabelsOnly] = useState(false);
+  const [labelsColocate, setLabelsColocate] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState('');
@@ -72,6 +74,8 @@ export function ExportModal() {
           seed: parseInt(seed) || 42,
           approved_only: approvedOnly,
           include_negative: includeNegative,
+          labels_only: labelsOnly,
+          labels_colocate: labelsColocate,
         });
       } else {
         const bboxRes = await exportBbox({
@@ -82,6 +86,8 @@ export function ExportModal() {
           approved_only: approvedOnly,
           include_segmentation: includeSegmentation,
           include_negative: includeNegative,
+          labels_only: labelsOnly,
+          labels_colocate: labelsColocate,
         });
         res = { ...bboxRes, is_valid: true };
       }
@@ -226,6 +232,34 @@ export function ExportModal() {
                 Include unlabeled images as negative examples
               </Label>
             </div>
+
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="labelsOnly"
+                checked={labelsOnly}
+                onChange={(e) => setLabelsOnly(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <Label htmlFor="labelsOnly" className="cursor-pointer">
+                Labels only (no image copying)
+              </Label>
+            </div>
+
+            {labelsOnly && exportFormat !== 'coco' && (
+              <div className="flex items-center space-x-2 ml-6">
+                <input
+                  type="checkbox"
+                  id="labelsColocate"
+                  checked={labelsColocate}
+                  onChange={(e) => setLabelsColocate(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <Label htmlFor="labelsColocate" className="cursor-pointer text-sm text-muted-foreground">
+                  Place label files next to original images
+                </Label>
+              </div>
+            )}
 
             {exportFormat === 'coco' && (
               <div className="flex items-center space-x-2">

@@ -174,14 +174,23 @@ async def find_fallback_reference(
     label_id: int,
     before_image_index: int,
     project_id: int,
+    exclude_image_ids: Optional[str] = None,
 ):
     """
     Find the first approved annotation for a label that can be used as a fallback reference.
 
     Searches backwards from before_image_index to find an approved annotation.
     This is used when propagation from the previous image fails.
+
+    Args:
+        exclude_image_ids: Comma-separated list of image IDs to skip (already tried)
     """
     store = get_store()
+
+    # Parse excluded image IDs
+    excluded: set[int] = set()
+    if exclude_image_ids:
+        excluded = {int(x) for x in exclude_image_ids.split(",") if x.strip()}
 
     # Get all images in project, sorted by order_index
     images = store.list_images(project_id)
@@ -190,6 +199,10 @@ async def find_fallback_reference(
     # Search backwards from before_image_index (iterate in reverse to find most recent)
     for img in reversed(images_sorted):
         if img.order_index >= before_image_index:
+            continue
+
+        # Skip excluded images (already tried as fallback)
+        if img.id in excluded:
             continue
 
         annotations = store.list_annotations(img.id)
