@@ -42,7 +42,7 @@ def export_yolo_detect(
     approved_only: bool = True,
     include_negative: bool = False,
     labels_only: bool = False,
-    labels_colocate: bool = False,
+    labels_colocate: bool = True,
 ) -> BboxExportReport:
     """
     Export project to YOLO detection format (bbox only).
@@ -352,11 +352,6 @@ def _do_coco_export(
     warnings = []
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    (out_path / "annotations").mkdir(parents=True, exist_ok=True)
-
-    if not labels_only:
-        for subset in split.keys():
-            (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
 
     labels = store.list_labels(project.id)
     label_to_idx = {
@@ -382,6 +377,12 @@ def _do_coco_export(
             output_dir=out_dir,
             warnings=warnings,
         )
+
+    # Create directories
+    (out_path / "annotations").mkdir(parents=True, exist_ok=True)
+    if not labels_only:
+        for subset in split.keys():
+            (out_path / "images" / subset).mkdir(parents=True, exist_ok=True)
 
     # Shuffle and split
     random.seed(seed)
