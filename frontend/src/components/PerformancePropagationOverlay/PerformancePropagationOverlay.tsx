@@ -7,13 +7,16 @@ import { stopAutoTracking } from '../../App';
 export function PerformancePropagationOverlay() {
   const performanceProgress = useUIStore((s) => s.performanceProgress);
   const [now, setNow] = useState(Date.now);
+  const isActive = !!performanceProgress;
 
   // Update clock every second for elapsed/ETA display
+  // Only depend on isActive, not the whole object, to avoid resetting the interval on every progress update
   useEffect(() => {
-    if (!performanceProgress) return;
+    if (!isActive) return;
+    setNow(Date.now()); // Reset clock when propagation starts
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [performanceProgress]);
+  }, [isActive]);
 
   if (!performanceProgress) return null;
 
