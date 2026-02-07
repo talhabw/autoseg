@@ -53,12 +53,8 @@ export function ImageCanvas() {
   const maskCanvases = useMemo(() => {
     if (isPerformanceLoopActive) return prevMaskCanvasesRef.current;
 
-    // Dispose previous canvases
-    prevMaskCanvasesRef.current.forEach((canvas) => {
-      canvas.width = 0;
-      canvas.height = 0;
-    });
-
+    // Don't mutate previous canvases - Konva may still be rendering them.
+    // Just replace the reference and let GC handle cleanup.
     const newCanvases = new Map<number, HTMLCanvasElement>();
 
     for (const ann of annotations) {
@@ -67,7 +63,10 @@ export function ImageCanvas() {
           const rle = ann.mask_rle as RLEMask;
           const color = getLabelColor(ann.label_id);
           const canvas = maskToCanvas(rle, color, maskOpacity);
-          newCanvases.set(ann.id, canvas);
+          // Only add valid canvases (non-zero dimensions)
+          if (canvas.width > 0 && canvas.height > 0) {
+            newCanvases.set(ann.id, canvas);
+          }
         } catch (err) {
           console.error('Failed to decode mask for annotation', ann.id, err);
         }
@@ -430,7 +429,8 @@ export function ImageCanvas() {
             .filter((ann) => ann.image_id === currentImage?.id)
             .map((ann) => {
               const maskCanvas = maskCanvases.get(ann.id);
-              if (!maskCanvas) return null;
+              // Skip invalid canvases (null or 0 dimensions) to prevent Konva drawImage errors
+              if (!maskCanvas || maskCanvas.width === 0 || maskCanvas.height === 0) return null;
 
               return (
                 <KonvaImage
