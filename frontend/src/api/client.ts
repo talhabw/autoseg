@@ -179,6 +179,17 @@ export async function deleteAllAnnotations(projectId: number): Promise<{ count: 
   return { count: response.data.count };
 }
 
+export async function deleteAnnotationsAfterIndex(
+  projectId: number,
+  afterIndex: number
+): Promise<{ count: number }> {
+  const response = await api.delete<{ status: string; count: number; after_index: number }>(
+    `/annotations/after-index/${projectId}`,
+    { params: { after_index: afterIndex } }
+  );
+  return { count: response.data.count };
+}
+
 export interface FallbackReferenceResult {
   found: boolean;
   annotation: Annotation | null;

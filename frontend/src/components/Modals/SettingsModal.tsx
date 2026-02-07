@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -21,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Trash2 } from 'lucide-react';
 
 export function SettingsModal() {
   const {
@@ -59,10 +60,12 @@ export function SettingsModal() {
     addToast,
   } = useUIStore();
 
-  const { resyncImages, project } = useProjectStore();
+  const { resyncImages, project, images } = useProjectStore();
 
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [bulkDeleteAfter, setBulkDeleteAfter] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (showSettingsModal) {
@@ -86,6 +89,38 @@ export function SettingsModal() {
       console.error('Failed to refresh images:', err);
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const afterIndex = parseInt(bulkDeleteAfter, 10);
+    if (isNaN(afterIndex) || afterIndex < 0) {
+      addToast('Please enter a valid image number', 'error');
+      return;
+    }
+    if (!project) return;
+
+    const imagesToAffect = images.length - afterIndex - 1;
+    if (imagesToAffect <= 0) {
+      addToast('No images after that index', 'info');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `This will delete ALL annotations from images after #${afterIndex + 1} (${imagesToAffect} images). This cannot be undone. Continue?`
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      const result = await api.deleteAnnotationsAfterIndex(project.id, afterIndex);
+      addToast(`Deleted ${result.count} annotations`, 'success');
+      setBulkDeleteAfter('');
+    } catch (err) {
+      addToast('Failed to delete annotations', 'error');
+      console.error('Bulk delete failed:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -126,6 +161,35 @@ export function SettingsModal() {
                     <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
                     {isRefreshing ? 'Scanning...' : 'Refresh'}
                   </Button>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <div className="space-y-1">
+                    <Label>Delete Annotations After Image</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Remove all annotations from images after a specific index. Enter the last image number to keep (1-based).
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={images.length}
+                      placeholder={`1-${images.length}`}
+                      value={bulkDeleteAfter}
+                      onChange={(e) => setBulkDeleteAfter(e.target.value)}
+                      className="w-28"
+                    />
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleBulkDelete}
+                      disabled={isDeleting || !bulkDeleteAfter}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      {isDeleting ? 'Deleting...' : 'Delete'}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

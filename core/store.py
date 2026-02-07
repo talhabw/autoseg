@@ -650,6 +650,31 @@ class ProjectStore:
         self.conn.execute("DELETE FROM annotations WHERE id = ?", (annotation_id,))
         self.commit()
 
+    def delete_annotations_after_index(self, project_id: int, after_index: int) -> int:
+        """
+        Delete all annotations for images after a given order_index.
+
+        Args:
+            project_id: ID of the project
+            after_index: Delete annotations for images with order_index > this value
+                         (0-based, so after_index=799 deletes from image 801 onward)
+
+        Returns:
+            Number of annotations deleted
+        """
+        cursor = self.conn.execute(
+            """
+            DELETE FROM annotations
+            WHERE image_id IN (
+                SELECT id FROM images
+                WHERE project_id = ? AND order_index > ?
+            )
+            """,
+            (project_id, after_index),
+        )
+        self.commit()
+        return cursor.rowcount
+
     def list_annotations(self, image_id: int) -> list[Annotation]:
         """
         List all annotations for an image.
