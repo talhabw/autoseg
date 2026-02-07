@@ -230,6 +230,105 @@ class ProjectStore:
                 (project_id, str(img_path), width, height, idx),
             )
 
+    def resync_images(self, project_id: int, image_dir: str) -> dict[str, int]:
+        """
+        Resync images from filesystem with database.
+
+        - Adds new images found in directory
+        - Removes records for images that no longer exist (along with their annotations)
+        - Preserves annotations for existing images
+
+        Args:
+            project_id: ID of the project
+            image_dir: Directory to scan for images
+
+        Returns:
+            Dict with counts: {"added": int, "removed": int, "unchanged": int}
+        """
+        image_dir_path = Path(image_dir)
+
+        # Get current images from filesystem
+        fs_image_files: set[Path] = set()
+        for ext in IMAGE_EXTENSIONS:
+            fs_image_files.update(image_dir_path.glob(f"*{ext}"))
+            fs_image_files.update(image_dir_path.glob(f"*{ext.upper()}"))
+
+        # Normalize to absolute path strings
+        fs_paths = {str(p.absolute()) for p in fs_image_files}
+
+        # Get current images from database
+        db_images = self.list_images(project_id)
+        db_paths = {img.path: img for img in db_images}
+
+        added = 0
+        removed = 0
+        unchanged = 0
+
+        # Find images to remove (in DB but not in filesystem)
+        for db_path, img in db_paths.items():
+            if db_path not in fs_paths:
+                # Delete annotations first
+                annotations = self.list_annotations(img.id)
+                for ann in annotations:
+                    self.conn.execute("DELETE FROM annotations WHERE id = ?", (ann.id,))
+                # Delete image record
+                self.conn.execute("DELETE FROM images WHERE id = ?", (img.id,))
+                removed += 1
+            else:
+                unchanged += 1
+
+        # Find images to add (in filesystem but not in DB)
+        existing_paths = set(db_paths.keys())
+        new_paths = [p for p in fs_paths if p not in existing_paths]
+        new_paths_sorted = sorted(
+            new_paths, key=lambda p: natural_sort_key(Path(p).name)
+        )
+
+        # Get max order_index for new images
+        max_index = max((img.order_index for img in db_images), default=-1)
+
+        for path in new_paths_sorted:
+            max_index += 1
+            img_path = Path(path)
+
+            try:
+                with Image.open(img_path) as img:
+                    width, height = img.size
+            except Exception as e:
+                print(f"Warning: Could not read image {path}: {e}")
+                continue
+
+            self.conn.execute(
+                """
+                INSERT INTO images (project_id, path, width, height, order_index)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (project_id, path, width, height, max_index),
+            )
+            added += 1
+
+        self.commit()
+
+        # Reindex order_index to be contiguous after deletions
+        if removed > 0:
+            self._reindex_images(project_id)
+
+        return {"added": added, "removed": removed, "unchanged": unchanged}
+
+    def _reindex_images(self, project_id: int) -> None:
+        """Reindex order_index to be contiguous after deletions."""
+        images = self.list_images(project_id)
+        images_sorted = sorted(images, key=lambda img: img.order_index)
+
+        for new_idx, img in enumerate(images_sorted):
+            if img.order_index != new_idx:
+                self.conn.execute(
+                    "UPDATE images SET order_index = ? WHERE id = ?",
+                    (new_idx, img.id),
+                )
+
+        self.commit()
+
     # ==================== Image Operations ====================
 
     def list_images(self, project_id: int) -> list[ImageRecord]:
@@ -550,6 +649,31 @@ class ProjectStore:
         """
         self.conn.execute("DELETE FROM annotations WHERE id = ?", (annotation_id,))
         self.commit()
+
+    def delete_annotations_after_index(self, project_id: int, after_index: int) -> int:
+        """
+        Delete all annotations for images after a given order_index.
+
+        Args:
+            project_id: ID of the project
+            after_index: Delete annotations for images with order_index > this value
+                         (0-based, so after_index=799 deletes from image 801 onward)
+
+        Returns:
+            Number of annotations deleted
+        """
+        cursor = self.conn.execute(
+            """
+            DELETE FROM annotations
+            WHERE image_id IN (
+                SELECT id FROM images
+                WHERE project_id = ? AND order_index > ?
+            )
+            """,
+            (project_id, after_index),
+        )
+        self.commit()
+        return cursor.rowcount
 
     def list_annotations(self, image_id: int) -> list[Annotation]:
         """

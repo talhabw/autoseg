@@ -45,8 +45,9 @@ export function FolderBrowser({
       setCurrentPath(result.path);
       setParentPath(result.parent);
       setEntries(result.entries);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load directory');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load directory';
+      setError(message);
       setEntries([]);
     } finally {
       setIsLoading(false);

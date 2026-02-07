@@ -8,10 +8,12 @@ import { OpenProjectModal } from './components/Modals/OpenProjectModal';
 import { ExportModal } from './components/Modals/ExportModal';
 import { SettingsModal } from './components/Modals/SettingsModal';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { PerformancePropagationOverlay } from './components/PerformancePropagationOverlay';
 import { Toaster } from "@/components/ui/sonner";
 import { useProjectStore } from './stores/projectStore';
 import { useAnnotationStore } from './stores/annotationStore';
 import { useUIStore } from './stores/uiStore';
+import { useNotifications } from './hooks/useNotifications';
 import * as api from './api/client';
 
 const queryClient = new QueryClient();
@@ -42,13 +44,329 @@ let _propagationLock = false;
 let _lastPropagationTime = 0;
 let _propagationRequestId = 0;
 let _pendingAutoNext = false; // Flag to trigger auto-next after annotations load
+const _sessionFailedImageIds = new Set<number>(); // Track failed images in current session (skip mode)
+let _performancePropagationActive = false; // Performance mode loop active
 
 // Export function to stop auto-tracking (used by UI components)
+// eslint-disable-next-line react-refresh/only-export-components
 export function stopAutoTracking() {
   _pendingAutoNext = false;
+  _performancePropagationActive = false;
+  _sessionFailedImageIds.clear(); // Clear failed images on stop
   // Increment request ID to cancel any in-progress propagation
   _propagationRequestId++;
-  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}`);
+  console.log(`stopAutoTracking: Incremented _propagationRequestId to ${_propagationRequestId}, cleared failed images`);
+}
+
+// Performance propagation: tight loop without UI refreshes per frame
+// Only updates the progress overlay, not ImageCanvas or annotation store
+async function runPerformancePropagation() {
+  if (_performancePropagationActive) {
+    console.log('[PERF] Already running, ignoring');
+    return;
+  }
+
+  _performancePropagationActive = true;
+  _propagationRequestId++;
+  const myRequestId = _propagationRequestId;
+
+  const { images, currentImageIndex: startIdx, project } = useProjectStore.getState();
+  const { propagationLoaded, loadPropagation, setStatusMessage } = useUIStore.getState();
+  // Note: Can't use hooks here since this is a module-level function
+
+  if (!project) {
+    _performancePropagationActive = false;
+    return;
+  }
+
+  // Ensure models are loaded
+  if (!propagationLoaded) {
+    setStatusMessage('Loading tracking models...');
+    await loadPropagation();
+  }
+
+  const totalImages = images.length - 1 - startIdx; // Images remaining to propagate
+  if (totalImages <= 0) {
+    useUIStore.getState().addToast('Already at last image', 'info');
+    _performancePropagationActive = false;
+    return;
+  }
+
+  // Initialize progress overlay
+  useUIStore.getState().setPerformanceProgress({
+    current: 0,
+    total: totalImages,
+    successCount: 0,
+    failedCount: 0,
+    skippedCount: 0,
+    startTime: Date.now(),
+    failedImageIndex: null,
+    failedLabels: [],
+  });
+
+  let currentIdx = startIdx;
+
+  while (currentIdx < images.length - 1 && _performancePropagationActive) {
+    // Check if request was cancelled
+    if (myRequestId !== _propagationRequestId) {
+      console.log(`[PERF] Aborted: request superseded (${myRequestId} vs ${_propagationRequestId})`);
+      break;
+    }
+
+    const sourceImageId = images[currentIdx].id;
+    const targetImageId = images[currentIdx + 1].id;
+    const imageNum = currentIdx - startIdx + 1;
+
+    console.log(`[PERF] Processing image ${imageNum}/${totalImages}: ${sourceImageId} -> ${targetImageId}`);
+
+    // Get source annotations directly from API (don't touch the store)
+    let sourceAnnotations: Awaited<ReturnType<typeof api.listAnnotations>>;
+    try {
+      sourceAnnotations = await api.listAnnotations(sourceImageId);
+    } catch (err) {
+      console.error(`[PERF] Failed to fetch annotations for image ${sourceImageId}:`, err);
+      useUIStore.getState().updatePerformanceProgress({ failedCount: (useUIStore.getState().performanceProgress?.failedCount ?? 0) + 1 });
+      currentIdx++;
+      continue;
+    }
+
+    if (sourceAnnotations.length === 0) {
+      console.log(`[PERF] No annotations on image ${sourceImageId}, skipping`);
+      useUIStore.getState().updatePerformanceProgress({
+        current: imageNum,
+        skippedCount: (useUIStore.getState().performanceProgress?.skippedCount ?? 0) + 1,
+      });
+      currentIdx++;
+      continue;
+    }
+
+    // Propagate all annotations
+    const propagationResults: Array<{
+      label_id: number;
+      bbox: [number, number, number, number];
+      mask_rle: object;
+      polygon: number[];
+    }> = [];
+    const failedLabels = new Set<number>();
+    let duplicateSkipCount = 0;
+
+    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+
+    for (const ann of sourceAnnotations) {
+      if (!ann.bbox) continue;
+      if (myRequestId !== _propagationRequestId) break;
+
+      try {
+        const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
+        let result;
+
+        if (useAdvancedApi) {
+          result = await api.propagateAdvanced(
+            sourceImageId, targetImageId, ann.id,
+            {
+              mode: propagationMode, iouVerify, iouThreshold,
+              useCachedMasks: true, sizeMinRatio, sizeMaxRatio,
+              stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
+            }
+          );
+        } else {
+          result = await api.propagate(
+            sourceImageId, targetImageId, ann.id,
+            sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch,
+            0.9, topK
+          );
+        }
+
+        if (result.duplicate_skipped) {
+          duplicateSkipCount++;
+          continue;
+        }
+
+        // Client-side batch duplicate check
+        const BBOX_IOU_THRESHOLD = 0.85;
+        let isDuplicate = false;
+        for (const existing of propagationResults) {
+          if (bboxIoU(result.bbox, existing.bbox) >= BBOX_IOU_THRESHOLD) {
+            isDuplicate = true;
+            break;
+          }
+        }
+        if (isDuplicate) {
+          duplicateSkipCount++;
+          continue;
+        }
+
+        propagationResults.push({
+          label_id: ann.label_id,
+          bbox: result.bbox,
+          mask_rle: result.mask_rle,
+          polygon: result.polygon,
+        });
+      } catch (err) {
+        console.error(`[PERF] Failed to propagate annotation ${ann.id}:`, err);
+        failedLabels.add(ann.label_id);
+      }
+    }
+
+    // Try fallback for failed labels
+    const stillFailedLabels: { labelId: number; labelName: string }[] = [];
+    if (failedLabels.size > 0 && project) {
+      for (const labelId of failedLabels) {
+        let fallbackSuccess = false;
+        const triedImageIds: number[] = [..._sessionFailedImageIds];
+        const MAX_FALLBACK_ATTEMPTS = 2;
+
+        for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS && !fallbackSuccess; attempt++) {
+          try {
+            const fallbackResult = await api.findFallbackReference(
+              labelId, currentIdx + 1, project.id,
+              triedImageIds.length > 0 ? triedImageIds : undefined
+            );
+
+            if (!fallbackResult.found || !fallbackResult.annotation) break;
+            triedImageIds.push(fallbackResult.annotation.image_id);
+
+            const result = await api.propagateAdvanced(
+              fallbackResult.annotation.image_id, targetImageId, fallbackResult.annotation.id,
+              {
+                mode: propagationMode, iouVerify, iouThreshold,
+                useCachedMasks: true, sizeMinRatio, sizeMaxRatio,
+                stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
+              }
+            );
+
+            if (result.duplicate_skipped) {
+              duplicateSkipCount++;
+              fallbackSuccess = true;
+              continue;
+            }
+
+            propagationResults.push({
+              label_id: labelId,
+              bbox: result.bbox,
+              mask_rle: result.mask_rle,
+              polygon: result.polygon,
+            });
+            fallbackSuccess = true;
+          } catch (err) {
+            console.error(`[PERF] Fallback attempt ${attempt + 1} failed for label ${labelId}:`, err);
+          }
+        }
+
+        if (!fallbackSuccess) {
+          const labels = useAnnotationStore.getState().labels;
+          const label = labels.find(l => l.id === labelId);
+          stillFailedLabels.push({ labelId, labelName: label?.name || `Label ${labelId}` });
+        }
+      }
+    }
+
+    // Save successful results via API
+    for (const result of propagationResults) {
+      try {
+        await api.createAnnotation({
+          image_id: targetImageId,
+          label_id: result.label_id,
+          bbox: result.bbox,
+          mask_rle: result.mask_rle,
+          polygon: result.polygon,
+          source: 'tracked',
+          status: 'pending',
+        });
+      } catch (err) {
+        console.error(`[PERF] Failed to create annotation:`, err);
+      }
+    }
+
+    // Update progress
+    const progress = useUIStore.getState().performanceProgress;
+    const newSuccessCount = (progress?.successCount ?? 0) + (propagationResults.length > 0 ? 1 : 0);
+    const newFailedCount = (progress?.failedCount ?? 0) + (stillFailedLabels.length > 0 ? 1 : 0);
+
+    // Handle failures based on propagation failure mode
+    if (stillFailedLabels.length > 0) {
+      _sessionFailedImageIds.add(targetImageId);
+      const { propagationFailureMode } = useUIStore.getState();
+
+      if (propagationFailureMode === 'stop') {
+        // STOP: Pause the loop, show the failed image to user
+        console.log(`[PERF] Stopping at image ${currentIdx + 1} - failed labels: ${stillFailedLabels.map(l => l.labelName).join(', ')}`);
+
+        // Navigate to the failed image so user can see and fix it
+        useProjectStore.getState().setCurrentImageIndex(currentIdx + 1);
+
+        useUIStore.getState().updatePerformanceProgress({
+          current: imageNum,
+          successCount: newSuccessCount,
+          failedCount: newFailedCount,
+          failedImageIndex: currentIdx + 1,
+          failedLabels: stillFailedLabels.map(l => l.labelName),
+        });
+
+        // Wait for user to resume or stop
+        await waitForResumeOrStop(myRequestId);
+
+        if (!_performancePropagationActive || myRequestId !== _propagationRequestId) {
+          console.log(`[PERF] Stopped after pause`);
+          break;
+        }
+
+        // User resumed - reload annotations for the current target image
+        // (user may have fixed annotations on it)
+        console.log(`[PERF] Resuming from image ${currentIdx + 1}`);
+        // Move forward (user fixed this image, continue from here)
+        currentIdx++;
+        continue;
+      }
+      // Skip mode: just continue
+    }
+
+    useUIStore.getState().updatePerformanceProgress({
+      current: imageNum,
+      successCount: newSuccessCount,
+      failedCount: newFailedCount,
+      skippedCount: (progress?.skippedCount ?? 0) + duplicateSkipCount,
+    });
+
+    currentIdx++;
+  }
+
+  // Done - navigate to where we ended up
+  const finalIdx = Math.min(currentIdx, images.length - 1);
+  useProjectStore.getState().setCurrentImageIndex(finalIdx);
+
+  // Show summary toast
+  const finalProgress = useUIStore.getState().performanceProgress;
+  if (finalProgress && _performancePropagationActive) {
+    const elapsed = ((Date.now() - finalProgress.startTime) / 1000).toFixed(1);
+    useUIStore.getState().addToast(
+      `Performance propagation complete: ${finalProgress.successCount} succeeded, ${finalProgress.failedCount} failed in ${elapsed}s`,
+      finalProgress.failedCount > 0 ? 'warning' : 'success',
+      5000
+    );
+  }
+
+  // Cleanup
+  _performancePropagationActive = false;
+  _propagationLock = false;
+  useUIStore.getState().setIsPropagating(false);
+  useUIStore.getState().setPerformanceProgress(null);
+}
+
+// Helper: wait until user clicks Resume or Stop in the overlay
+function waitForResumeOrStop(requestId: number): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const progress = useUIStore.getState().performanceProgress;
+      // Resolve when: no progress (stopped), no failed image (resumed), or request superseded
+      if (!progress || progress.failedImageIndex === null || requestId !== _propagationRequestId || !_performancePropagationActive) {
+        resolve();
+        return;
+      }
+      setTimeout(check, 200);
+    };
+    check();
+  });
 }
 
 function AppContent() {
@@ -63,6 +381,8 @@ function AppContent() {
     setStatusMessage,
     checkModelStatus,
   } = useUIStore();
+
+  const { requestPermission, notifyPropagationFailure } = useNotifications();
 
   const currentImage = images[currentImageIndex];
 
@@ -84,7 +404,8 @@ function AppContent() {
     };
 
     init();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Mount-only: reads fresh state from stores
 
   // Load annotations when image changes
   useEffect(() => {
@@ -97,26 +418,35 @@ function AppContent() {
           const { currentImageIndex: idx, images: imgs } = useProjectStore.getState();
           
           if (autoNext && trackModeEnabled && idx < imgs.length - 1 && !_propagationLock) {
-            // Small delay to let React render, but much shorter than 500ms
-            setTimeout(() => handlePropagateAndNext(), 50);
+            const { performanceMode } = useUIStore.getState();
+            if (performanceMode && !_performancePropagationActive) {
+              // Performance mode: run tight loop without UI updates
+              runPerformancePropagation();
+            } else if (!performanceMode) {
+              // Normal mode: small delay to let React render
+              setTimeout(() => handlePropagateAndNext(), 50);
+            }
+            // If performance propagation is already active, do nothing (it manages its own loop)
           }
         }
       });
     } else {
       clearAnnotations();
     }
-  }, [currentImage?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentImage?.id]); // Only re-run on image change; callbacks read fresh store state
 
   // Load labels when project changes
   useEffect(() => {
     if (project) {
       loadLabels();
     }
-  }, [project?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]); // Only re-run on project change
 
   // Handle segmentation
   const handleSegment = useCallback(async () => {
-    const { selectedAnnotationId: selectedAnn, annotations, refinePoints: points, clearRefinePoints: clearPoints } = useAnnotationStore.getState();
+    const { selectedAnnotationId: selectedAnn, annotations, refinePoints: points } = useAnnotationStore.getState();
     const { images: currentImages, currentImageIndex: currentIdx } = useProjectStore.getState();
     const currentImg = currentImages[currentIdx];
 
@@ -197,6 +527,12 @@ function AppContent() {
 
     console.log(`${logPrefix} ✅ Lock acquired, requestId=${currentRequestId}`);
 
+    // Request notification permission early (non-blocking)
+    // This allows us to notify the user if propagation fails
+    requestPermission().catch(() => {
+      console.log(`${logPrefix} Notification permission not granted (non-critical)`);
+    });
+
     // Read fresh state from stores to avoid closure issues
     const { images: currentImages, currentImageIndex: currentIdx, nextImage: goNext, project } = useProjectStore.getState();
     const currentImg = currentImages[currentIdx];
@@ -263,7 +599,6 @@ function AppContent() {
 
     // Track which labels failed propagation from previous image
     const failedLabels = new Set<number>();
-    let successCount = 0;
     let fallbackCount = 0;
 
     try {
@@ -292,6 +627,7 @@ function AppContent() {
         polygon: number[];
       }> = [];
       let duplicateSkipCount = 0;
+      const notFoundLabels: { labelId: number; labelName: string }[] = [];  // Labels where object wasn't found in target
 
       for (let i = 0; i < sourceAnnotations.length; i++) {
         const ann = sourceAnnotations[i];
@@ -345,7 +681,16 @@ function AppContent() {
 
           // Check if this was a duplicate (detected by backend against existing DB annotations)
           if (result.duplicate_skipped) {
-            console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
+            // Check if it's because the object matched a different class (object not found in target)
+            if (result.conflicting_label_name) {
+              // Get the label name for the source annotation
+              const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === ann.label_id);
+              const sourceLabelName = sourceLabel?.name || `Label ${ann.label_id}`;
+              console.log(`${logPrefix} Object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}" (IoU=${result.duplicate_iou?.toFixed(3)})`);
+              notFoundLabels.push({ labelId: ann.label_id, labelName: sourceLabelName });
+            } else {
+              console.log(`${logPrefix} Duplicate detected for ann ${ann.id} (IoU=${result.duplicate_iou?.toFixed(3)}), skipping`);
+            }
             duplicateSkipCount++;
             continue;  // Don't add to propagationResults
           }
@@ -379,98 +724,194 @@ function AppContent() {
             mask_rle: result.mask_rle,
             polygon: result.polygon,
           });
-          successCount++;
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error(`${logPrefix} Propagation failed for annotation:`, ann.id, err);
           // Track this label as failed for fallback attempt
           failedLabels.add(ann.label_id);
         }
       }
 
-      // Try fallback for failed labels (if we have a project)
+      // Try fallback for failed labels with multiple attempts (if we have a project)
+      // MAX_FALLBACK_ATTEMPTS = 2 means: try up to 2 different earlier images per failed label
+      const MAX_FALLBACK_ATTEMPTS = 2;
+      const stillFailedLabels: { labelId: number; labelName: string }[] = [];
+
       if (failedLabels.size > 0 && project) {
-        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels...`);
+        console.log(`${logPrefix} 🔄 Attempting fallback for ${failedLabels.size} failed labels (up to ${MAX_FALLBACK_ATTEMPTS} attempts each)...`);
         setStatus(`Finding fallback references for ${failedLabels.size} labels...`);
 
         for (const labelId of failedLabels) {
-          try {
-            // Find a fallback reference annotation (approved annotation from earlier images)
-            const fallbackResult = await api.findFallbackReference(
-              labelId,
-              currentIdx + 1, // beforeImageIndex - the target image index
-              project.id
-            );
+          let fallbackSuccess = false;
+          const triedImageIds: number[] = [..._sessionFailedImageIds]; // Start with session-failed images excluded
 
-            if (!fallbackResult.found || !fallbackResult.annotation) {
-              console.log(`${logPrefix} No fallback found for label ${labelId}`);
-              // Don't spam toasts - summary will show failed count
-              continue;
-            }
+          // Try up to MAX_FALLBACK_ATTEMPTS different reference images
+          for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS && !fallbackSuccess; attempt++) {
+            try {
+              // Find a fallback reference, excluding already-tried images AND session-failed images
+              const fallbackResult = await api.findFallbackReference(
+                labelId,
+                currentIdx + 1, // beforeImageIndex - the target image index
+                project.id,
+                triedImageIds.length > 0 ? triedImageIds : undefined
+              );
 
-            console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index}`);
-
-            // Get settings again
-            const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
-
-            // Propagate from the fallback reference
-            const result = await api.propagateAdvanced(
-              fallbackResult.annotation.image_id,
-              targetImageId,
-              fallbackResult.annotation.id,
-              {
-                mode: propagationMode,
-                iouVerify,
-                iouThreshold,
-                useCachedMasks: true,
-                sizeMinRatio,
-                sizeMaxRatio,
-                stopOnSizeMismatch,
-                topK,
-                skipDuplicateThreshold: 0.9,  // Skip if 90%+ overlap with existing
+              if (!fallbackResult.found || !fallbackResult.annotation) {
+                console.log(`${logPrefix} No fallback found for label ${labelId} (attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS})`);
+                break; // No more fallbacks available
               }
-            );
 
-            if (result.duplicate_skipped) {
-              console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
-              duplicateSkipCount++;
-              continue;
-            }
+              // Track this image so we don't try it again
+              triedImageIds.push(fallbackResult.annotation.image_id);
+              console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index} (attempt ${attempt + 1})`);
 
-            // Client-side batch duplicate check for fallback results too
-            let isBatchDuplicate = false;
-            for (const existing of propagationResults) {
-              const iou = bboxIoU(result.bbox, existing.bbox);
-              if (iou >= BBOX_IOU_THRESHOLD) {
-                console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
-                isBatchDuplicate = true;
-                break;
+              // Get settings again
+              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+
+              // Propagate from the fallback reference
+              const result = await api.propagateAdvanced(
+                fallbackResult.annotation.image_id,
+                targetImageId,
+                fallbackResult.annotation.id,
+                {
+                  mode: propagationMode,
+                  iouVerify,
+                  iouThreshold,
+                  useCachedMasks: true,
+                  sizeMinRatio,
+                  sizeMaxRatio,
+                  stopOnSizeMismatch,
+                  topK,
+                  skipDuplicateThreshold: 0.9,
+                }
+              );
+
+              if (result.duplicate_skipped) {
+                if (result.conflicting_label_name) {
+                  const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
+                  const sourceLabelName = sourceLabel?.name || `Label ${labelId}`;
+                  console.log(`${logPrefix} Fallback object not found: "${sourceLabelName}" matched existing "${result.conflicting_label_name}" (attempt ${attempt + 1})`);
+                  // Try next fallback
+                  continue;
+                } else {
+                  console.log(`${logPrefix} Fallback duplicate for label ${labelId}, skipping`);
+                }
+                duplicateSkipCount++;
+                fallbackSuccess = true; // Consider duplicate as "handled"
+                continue;
               }
-            }
-            if (isBatchDuplicate) {
-              duplicateSkipCount++;
-              continue;
-            }
 
-            console.log(`${logPrefix} Fallback propagation success for label ${labelId}`);
-            propagationResults.push({
-              label_id: labelId,
-              bbox: result.bbox,
-              mask_rle: result.mask_rle,
-              polygon: result.polygon,
-            });
-            fallbackCount++;
-          } catch (err: any) {
-            console.error(`${logPrefix} Fallback propagation failed for label ${labelId}:`, err);
-            // Don't show toast for each failure - just log it
-            // We'll continue to next image anyway
+              // Client-side batch duplicate check
+              const BBOX_IOU_THRESHOLD = 0.85;
+              let isBatchDuplicate = false;
+              for (const existing of propagationResults) {
+                const iou = bboxIoU(result.bbox, existing.bbox);
+                if (iou >= BBOX_IOU_THRESHOLD) {
+                  console.log(`${logPrefix} Fallback batch duplicate for label ${labelId} (bbox IoU=${iou.toFixed(3)}), skipping`);
+                  isBatchDuplicate = true;
+                  break;
+                }
+              }
+              if (isBatchDuplicate) {
+                duplicateSkipCount++;
+                fallbackSuccess = true;
+                continue;
+              }
+
+              console.log(`${logPrefix} ✅ Fallback propagation success for label ${labelId} (attempt ${attempt + 1})`);
+              propagationResults.push({
+                label_id: labelId,
+                bbox: result.bbox,
+                mask_rle: result.mask_rle,
+                polygon: result.polygon,
+              });
+              fallbackCount++;
+              fallbackSuccess = true;
+            } catch (err: unknown) {
+              console.error(`${logPrefix} Fallback attempt ${attempt + 1} failed for label ${labelId}:`, err);
+              // Try next fallback
+            }
+          }
+
+          // If all fallback attempts failed, track this label
+          if (!fallbackSuccess) {
+            const sourceLabel = useAnnotationStore.getState().labels.find(l => l.id === labelId);
+            const labelName = sourceLabel?.name || `Label ${labelId}`;
+            stillFailedLabels.push({ labelId, labelName });
           }
         }
       }
 
-      // Log summary of failures (but don't stop)
-      const totalFailed = failedLabels.size - fallbackCount;
-      if (totalFailed > 0) {
-        console.log(`${logPrefix} ⚠️ ${totalFailed} labels failed (no fallback found), continuing anyway`);
+      // Handle failed labels based on propagationFailureMode setting
+      if (stillFailedLabels.length > 0) {
+        const failedNames = stillFailedLabels.map(l => l.labelName);
+        const { propagationFailureMode } = useUIStore.getState();
+        
+        console.log(`${logPrefix} ⚠️ ${stillFailedLabels.length} labels failed all fallback attempts: ${failedNames.join(', ')} (mode: ${propagationFailureMode})`);
+        
+        // Mark this image as failed in session (for skip mode reference exclusion)
+        _sessionFailedImageIds.add(targetImageId);
+        
+        if (propagationFailureMode === 'stop') {
+          // STOP MODE: Stop propagation, notify user, navigate to failed image
+          console.log(`${logPrefix} 🛑 STOPPING: propagationFailureMode='stop'`);
+          setStatus(`Propagation stopped - failed to track: ${failedNames.join(', ')}`);
+          
+          // Send browser notification
+          notifyPropagationFailure(failedNames);
+          
+          // Show toast with details
+          const { toast } = await import('sonner');
+          toast.error('Propagation Stopped', {
+            description: `Could not track: ${failedNames.slice(0, 3).join(', ')}${failedNames.length > 3 ? ` and ${failedNames.length - 3} more` : ''}. Manual annotation required.`,
+            duration: 10000,
+          });
+
+          // Create annotations for labels that DID succeed before stopping
+          if (propagationResults.length > 0) {
+            console.log(`${logPrefix} Creating ${propagationResults.length} successful annotations before stopping...`);
+            for (const result of propagationResults) {
+              try {
+                await api.createAnnotation({
+                  image_id: targetImageId,
+                  label_id: result.label_id,
+                  bbox: result.bbox,
+                  mask_rle: result.mask_rle,
+                  polygon: result.polygon,
+                  source: 'tracked',
+                  status: 'pending',
+                });
+              } catch (err) {
+                console.error(`${logPrefix} Failed to create annotation:`, err);
+              }
+            }
+          }
+
+          // Navigate to the failed image so user can manually annotate
+          console.log(`${logPrefix} Navigating to failed image ${targetImageId} for manual annotation`);
+          // Find the index of the target image and navigate to it
+          const targetIdx = currentImages.findIndex(img => img.id === targetImageId);
+          if (targetIdx >= 0) {
+            useProjectStore.getState().setCurrentImageIndex(targetIdx);
+          }
+
+          setIsPropagating(false);
+          _propagationLock = false;
+          return; // STOP - don't continue to next image
+        } else {
+          // SKIP MODE: Log warning, save successful results, continue to next image
+          console.log(`${logPrefix} ⏭️ SKIPPING: propagationFailureMode='skip', continuing to next image`);
+          setStatus(`Skipped image - failed to track: ${failedNames.join(', ')}`);
+          
+          // Show a brief info toast (non-blocking)
+          const { toast } = await import('sonner');
+          toast.warning('Skipped Image', {
+            description: `Could not track: ${failedNames.slice(0, 2).join(', ')}${failedNames.length > 2 ? ` (+${failedNames.length - 2})` : ''}`,
+            duration: 3000,
+          });
+          
+          // Still save the successful propagations for this image
+          // (fall through to annotation creation below)
+        }
       }
 
       // Check if request was superseded before creating annotations
@@ -508,6 +949,7 @@ function AppContent() {
       }
 
       // Build summary message
+      const totalFailed = sourceAnnotations.length - propagationResults.length - duplicateSkipCount;
       let message = `Tracked ${propagationResults.length}/${sourceAnnotations.length}`;
       if (fallbackCount > 0) {
         message += ` (${fallbackCount} via fallback)`;
@@ -535,6 +977,24 @@ function AppContent() {
 
       const newIdx = useProjectStore.getState().currentImageIndex;
       console.log(`${logPrefix} ✅ Navigation complete: currentIdx AFTER nextImage() = ${newIdx}`);
+
+      // If there were labels whose objects weren't found, auto-select the first one and switch to bbox mode
+      if (notFoundLabels.length > 0) {
+        const firstMissing = notFoundLabels[0];
+        console.log(`${logPrefix} 🎯 Auto-selecting missing label "${firstMissing.labelName}" and switching to bbox mode`);
+        
+        // Set selected label and switch to bbox drawing mode
+        useAnnotationStore.getState().selectLabel(firstMissing.labelId);
+        useUIStore.getState().setMode('draw');
+        
+        // Show helpful toast
+        const missingNames = notFoundLabels.map(l => l.labelName).join(', ');
+        useUIStore.getState().addToast(
+          `Not found: ${missingNames}. Draw bbox to add.`,
+          'info',
+          4000
+        );
+      }
     } catch (err) {
       // Clear pending flag on error to prevent unwanted auto-propagation
       _pendingAutoNext = false;
@@ -544,6 +1004,7 @@ function AppContent() {
       setIsPropagating(false);
       _propagationLock = false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // No dependencies - reads fresh state from stores
 
   // Approve selected annotation
@@ -637,6 +1098,14 @@ function AppContent() {
         return;
       }
 
+      // During performance propagation, only allow Escape (to stop)
+      if (_performancePropagationActive) {
+        if (e.key.toLowerCase() !== 'escape') {
+          e.preventDefault();
+          return;
+        }
+      }
+
       // Read fresh state from stores
       const { trackModeEnabled: trackEnabled, reviewModeEnabled: reviewEnabled, mode: currentMode, propagationLoaded: propLoaded, loadPropagation: loadProp, setMode: setModeAction, setTrackMode: setTrack, setReviewMode: setReview } = useUIStore.getState();
       const { selectedAnnotationId: selectedAnn, refinePoints: points, clearRefinePoints: clearPoints } = useAnnotationStore.getState();
@@ -650,7 +1119,14 @@ function AppContent() {
         case 'd':
         case 'arrowright':
           if (trackEnabled) {
-            handlePropagateAndNext();
+            const { performanceMode: perfMode, autoNext: isAutoNext } = useUIStore.getState();
+            if (perfMode && isAutoNext && !_performancePropagationActive) {
+              // Performance mode with auto-next: run tight loop
+              runPerformancePropagation();
+            } else {
+              // Normal mode or single-step: standard propagation
+              handlePropagateAndNext();
+            }
           } else {
             goNext();
           }
@@ -677,6 +1153,11 @@ function AppContent() {
               } else {
                 setAuto(true);
                 useUIStore.getState().addToast('Auto-tracking enabled', 'success', 1500);
+                // In performance mode, immediately start the tight propagation loop
+                const { performanceMode: perfMode2 } = useUIStore.getState();
+                if (perfMode2 && !_performancePropagationActive) {
+                  runPerformancePropagation();
+                }
               }
             } else {
               useUIStore.getState().addToast('Enable track mode first (T)', 'warning', 1500);
@@ -772,6 +1253,7 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty deps - all callbacks are now stable and read fresh state
 
   return (
@@ -794,6 +1276,9 @@ function AppContent() {
 
       {/* Loading overlay for model operations */}
       <LoadingOverlay />
+
+      {/* Performance propagation overlay */}
+      <PerformancePropagationOverlay />
 
       {/* Toast Notifications */}
       <Toaster />

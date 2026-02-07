@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Annotation, Label, RefinePoint } from '../types';
 import * as api from '../api/client';
+import { useUIStore } from './uiStore';
 
 interface AnnotationState {
   // State
@@ -111,6 +112,10 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
 
   selectAnnotation: (annotationId) => {
     set({ selectedAnnotationId: annotationId, refinePoints: [] });
+    // Switch to refine mode when an annotation is selected
+    if (annotationId !== null) {
+      useUIStore.getState().setMode('refine');
+    }
   },
 
   selectLabel: (labelId) => {

@@ -395,14 +395,15 @@ class SegmentService:
         if bbox_hint:
             box = np.array(bbox_hint)
 
-        # Run prediction
+        # Run prediction - use settings for multimask_output
+        multimask = self._settings.get("multimask_output", True)
         with torch.inference_mode():
             masks, scores, logits = self.model.predict_inst(
                 self._image_state,
                 point_coords=point_coords,
                 point_labels=point_labels,
                 box=box,
-                multimask_output=True,
+                multimask_output=multimask,
             )
 
         # Get best mask

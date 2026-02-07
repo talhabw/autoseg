@@ -54,6 +54,18 @@ export async function setSetting(key: string, value: string): Promise<void> {
   await api.put(`/projects/settings/${key}`, null, { params: { value } });
 }
 
+export interface ResyncImagesResult {
+  added: number;
+  removed: number;
+  unchanged: number;
+  total: number;
+}
+
+export async function resyncImages(): Promise<ResyncImagesResult> {
+  const response = await api.post<ResyncImagesResult>('/projects/resync-images');
+  return response.data;
+}
+
 // ==================== Images ====================
 
 export async function listImages(): Promise<ImageRecord[]> {
@@ -78,6 +90,17 @@ export function getImageUrl(imageId: number, cacheBuster?: string | number): str
 
 export function getThumbnailUrl(imageId: number, size = 200, cacheBuster?: string | number): string {
   let url = `/api/images/${imageId}/thumbnail?size=${size}`;
+  if (cacheBuster) url += `&v=${cacheBuster}`;
+  return url;
+}
+
+export function getOptimizedImageUrl(
+  imageId: number,
+  maxWidth = 2048,
+  quality = 85,
+  cacheBuster?: string | number
+): string {
+  let url = `/api/images/${imageId}/optimized?max_width=${maxWidth}&quality=${quality}`;
   if (cacheBuster) url += `&v=${cacheBuster}`;
   return url;
 }
@@ -156,6 +179,17 @@ export async function deleteAllAnnotations(projectId: number): Promise<{ count: 
   return { count: response.data.count };
 }
 
+export async function deleteAnnotationsAfterIndex(
+  projectId: number,
+  afterIndex: number
+): Promise<{ count: number }> {
+  const response = await api.delete<{ status: string; count: number; after_index: number }>(
+    `/annotations/after-index/${projectId}`,
+    { params: { after_index: afterIndex } }
+  );
+  return { count: response.data.count };
+}
+
 export interface FallbackReferenceResult {
   found: boolean;
   annotation: Annotation | null;
@@ -165,12 +199,14 @@ export interface FallbackReferenceResult {
 export async function findFallbackReference(
   labelId: number,
   beforeImageIndex: number,
-  projectId: number
+  projectId: number,
+  excludeImageIds?: number[]
 ): Promise<FallbackReferenceResult> {
   const response = await api.get<FallbackReferenceResult>(`/annotations/fallback/${labelId}`, {
     params: {
       before_image_index: beforeImageIndex,
       project_id: projectId,
+      exclude_image_ids: excludeImageIds?.join(','),
     },
   });
   return response.data;
@@ -385,6 +421,9 @@ export async function exportYolo(data: {
   train_split?: number;
   seed?: number;
   approved_only?: boolean;
+  include_negative?: boolean;
+  labels_only?: boolean;
+  labels_colocate?: boolean;
 }): Promise<{
   train_images: number;
   val_images: number;
@@ -394,6 +433,27 @@ export async function exportYolo(data: {
   validation_errors: string[];
 }> {
   const response = await api.post('/export/yolo', data);
+  return response.data;
+}
+
+export async function exportBbox(data: {
+  output_dir: string;
+  format: 'yolo-detect' | 'coco';
+  train_split?: number;
+  seed?: number;
+  approved_only?: boolean;
+  include_segmentation?: boolean;
+  include_negative?: boolean;
+  labels_only?: boolean;
+  labels_colocate?: boolean;
+}): Promise<{
+  format: string;
+  train_images: number;
+  val_images: number;
+  total_annotations: number;
+  warnings: string[];
+}> {
+  const response = await api.post('/export/bbox', data);
   return response.data;
 }
 

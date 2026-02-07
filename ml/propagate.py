@@ -432,7 +432,7 @@ class PropagateService:
         mode: Literal["peak", "dense", "auto"] = "auto",
         iou_verify: bool = True,
         iou_threshold: float = 0.3,
-        use_cached_masks: bool = True,
+        use_cached_masks: bool = False,
         **kwargs,
     ) -> Optional[PropagationResult]:
         """
@@ -565,91 +565,64 @@ class PropagateService:
         if result is None and mode in ["dense", "auto"] and dense_mask is not None:
             logger.info("Attempting dense propagation with SAM mask matching...")
 
-            # Option 1: Use cached "everything" masks if available
-            if use_cached_masks:
-                cached_match = self.segment_service.find_best_mask_by_iou(
-                    target_image_id, dense_mask, min_iou=iou_threshold
-                )
-                if cached_match:
-                    matched_mask, iou_score = cached_match
-                    bbox = matched_mask.bbox
-                    area_ratio = (
-                        matched_mask.area / source_area if source_area > 0 else 1.0
+            # Use dense mask center to prompt SAM
+            # Find center of dense mask
+            rows, cols = np.where(dense_mask > 0)
+            if len(rows) > 0:
+                center_y = int(np.mean(rows))
+                center_x = int(np.mean(cols))
+
+                # Set image for SAM
+                self.segment_service.set_image(target_image, target_image_id)
+
+                try:
+                    mask, sam_score, bbox = self.segment_service.segment_with_point(
+                        center_x, center_y
                     )
 
-                    result = PropagationResult(
-                        bbox=bbox,
-                        mask=matched_mask.mask,
-                        confidence=float(matched_mask.score),
-                        fallback_used=True,
-                        area_ratio=area_ratio,
-                        method="iou_match",
-                        iou_score=iou_score,
-                    )
-                    method_used = "iou_match"
-                    logger.info(f"Used cached mask match: IoU={iou_score:.3f}")
-
-            # Option 2: Use dense mask center to prompt SAM
-            if result is None:
-                # Find center of dense mask
-                rows, cols = np.where(dense_mask > 0)
-                if len(rows) > 0:
-                    center_y = int(np.mean(rows))
-                    center_x = int(np.mean(cols))
-
-                    # Set image for SAM
-                    self.segment_service.set_image(target_image, target_image_id)
-
-                    try:
-                        mask, sam_score, bbox = self.segment_service.segment_with_point(
-                            center_x, center_y
+                    # Verify IoU
+                    iou_score = mask_iou(mask, dense_mask)
+                    if iou_score >= iou_threshold:
+                        area_ratio = (
+                            mask.sum() / source_area if source_area > 0 else 1.0
                         )
 
-                        # Verify IoU
-                        iou_score = mask_iou(mask, dense_mask)
-                        if iou_score >= iou_threshold:
-                            area_ratio = (
-                                mask.sum() / source_area if source_area > 0 else 1.0
-                            )
+                        # Get descriptor similarity for confidence
+                        source_desc = self.embed_service.get_object_descriptor(
+                            source_image,
+                            source_bbox,
+                            mask=source_mask,
+                            image_id=source_image_id,
+                            annotation_id=annotation_id,
+                        )
+                        target_desc = self.embed_service.get_object_descriptor(
+                            target_image, bbox, mask=mask, image_id=target_image_id
+                        )
+                        embed_sim = self.embed_service.compute_similarity(
+                            source_desc, target_desc
+                        )
 
-                            # Get descriptor similarity for confidence
-                            source_desc = self.embed_service.get_object_descriptor(
-                                source_image,
-                                source_bbox,
-                                mask=source_mask,
-                                image_id=source_image_id,
-                                annotation_id=annotation_id,
-                            )
-                            target_desc = self.embed_service.get_object_descriptor(
-                                target_image, bbox, mask=mask, image_id=target_image_id
-                            )
-                            embed_sim = self.embed_service.compute_similarity(
-                                source_desc, target_desc
-                            )
+                        confidence = 0.5 * embed_sim + 0.3 * sam_score + 0.2 * iou_score
 
-                            confidence = (
-                                0.5 * embed_sim + 0.3 * sam_score + 0.2 * iou_score
-                            )
-
-                            result = PropagationResult(
-                                bbox=bbox,
-                                mask=mask,
-                                confidence=confidence,
-                                fallback_used=True,
-                                area_ratio=area_ratio,
-                                method="dense",
-                                iou_score=iou_score,
-                            )
-                            method_used = "dense"
-                            logger.info(
-                                f"Dense propagation succeeded: IoU={iou_score:.3f}, sim={embed_sim:.3f}"
-                            )
-                        else:
-                            logger.warning(
-                                f"Dense SAM result rejected: IoU {iou_score:.3f} < {iou_threshold}"
-                            )
-                    except Exception as e:
-                        logger.warning(f"Dense SAM prompting failed: {e}")
+                        result = PropagationResult(
+                            bbox=bbox,
+                            mask=mask,
+                            confidence=confidence,
+                            fallback_used=True,
+                            area_ratio=area_ratio,
+                            method="dense",
+                            iou_score=iou_score,
+                        )
+                        method_used = "dense"
+                        logger.info(
+                            f"Dense propagation succeeded: IoU={iou_score:.3f}, sim={embed_sim:.3f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Dense SAM result rejected: IoU {iou_score:.3f} < {iou_threshold}"
+                        )
+                except Exception as e:
+                    logger.warning(f"Dense SAM prompting failed: {e}")
 
         if result:
             logger.info(f"Propagation succeeded using method: {method_used}")

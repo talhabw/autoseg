@@ -53,6 +53,7 @@ export interface PropagateResult {
   area_ratio?: number; // Ratio of new area to old area
   duplicate_skipped?: boolean;  // True if propagation was skipped due to duplicate
   duplicate_iou?: number;  // IoU with the overlapping annotation
+  conflicting_label_name?: string | null;  // If skipped due to different class at same location
 }
 
 // Point for refinement
@@ -100,6 +101,7 @@ export interface PropagateAdvancedResult {
   iou_score: number | null;
   duplicate_skipped?: boolean;
   duplicate_iou?: number;
+  conflicting_label_name?: string | null;  // If skipped due to different class at same location
 }
 
 // Propagation mode for advanced propagation

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Circle, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { useProjectStore } from '../../stores/projectStore';
 import { useAnnotationStore } from '../../stores/annotationStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getImageUrl } from '../../api/client';
+import { getOptimizedImageUrl } from '../../api/client';
 import { maskToCanvas, type RLEMask } from '../../utils/rle';
 import type { Annotation, DrawingBbox } from '../../types';
 
@@ -22,8 +22,8 @@ export function ImageCanvas() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(true);
 
-  // Cache for decoded mask canvases
-  const [maskCanvases, setMaskCanvases] = useState<Map<number, HTMLCanvasElement>>(new Map());
+  // Cache for decoded mask canvases (previous ref for cleanup)
+  const prevMaskCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
 
   const { images, currentImageIndex } = useProjectStore();
   const {
@@ -37,9 +37,11 @@ export function ImageCanvas() {
     refinePoints,
     addRefinePoint,
   } = useAnnotationStore();
-  const { mode, maskOpacity } = useUIStore();
+  const { mode, maskOpacity, performanceProgress } = useUIStore();
 
   const currentImage = images[currentImageIndex];
+  // Skip heavy rendering when performance propagation is running (no failed image = loop active)
+  const isPerformanceLoopActive = performanceProgress !== null && performanceProgress.failedImageIndex === null;
 
   // Get label color
   const getLabelColor = useCallback((labelId: number): string => {
@@ -47,8 +49,12 @@ export function ImageCanvas() {
     return label?.color || '#888888';
   }, [labels]);
 
-  // Decode masks when annotations change
-  useEffect(() => {
+  // Decode masks when annotations change (skip during performance loop)
+  const maskCanvases = useMemo(() => {
+    if (isPerformanceLoopActive) return prevMaskCanvasesRef.current;
+
+    // Don't mutate previous canvases - Konva may still be rendering them.
+    // Just replace the reference and let GC handle cleanup.
     const newCanvases = new Map<number, HTMLCanvasElement>();
 
     for (const ann of annotations) {
@@ -57,40 +63,82 @@ export function ImageCanvas() {
           const rle = ann.mask_rle as RLEMask;
           const color = getLabelColor(ann.label_id);
           const canvas = maskToCanvas(rle, color, maskOpacity);
-          newCanvases.set(ann.id, canvas);
+          // Only add valid canvases (non-zero dimensions)
+          if (canvas.width > 0 && canvas.height > 0) {
+            newCanvases.set(ann.id, canvas);
+          }
         } catch (err) {
           console.error('Failed to decode mask for annotation', ann.id, err);
         }
       }
     }
 
-    setMaskCanvases(newCanvases);
-  }, [annotations, maskOpacity, getLabelColor]);
+    prevMaskCanvasesRef.current = newCanvases;
+    return newCanvases;
+  }, [annotations, maskOpacity, getLabelColor, isPerformanceLoopActive]);
 
   // Get project for cache busting
   const project = useProjectStore((s) => s.project);
 
-  // Load image when current image changes
+  const fitToView = useCallback((img: HTMLImageElement) => {
+    if (!containerRef.current) return;
+
+    const padding = 40;
+    const scaleX = (containerSize.width - padding) / img.width;
+    const scaleY = (containerSize.height - padding) / img.height;
+    const scale = Math.min(scaleX, scaleY, 1);
+
+    const x = (containerSize.width - img.width * scale) / 2;
+    const y = (containerSize.height - img.height * scale) / 2;
+
+    setStageScale(scale);
+    setStagePos({ x, y });
+  }, [containerSize]);
+
+  // Load image when current image changes (skip during performance loop)
   useEffect(() => {
-    if (!currentImage) {
-      setImage(null);
-      setIsImageLoading(false);
+    if (!currentImage || isPerformanceLoopActive) {
+      if (!currentImage) {
+        setImage(null);
+        setIsImageLoading(false);
+      }
       return;
     }
 
     // Set loading state - this will hide stale annotations
     setIsImageLoading(true);
+    let cancelled = false;
 
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
-    // Use project.id as cache buster to prevent stale images when switching projects
-    img.src = getImageUrl(currentImage.id, project?.id);
+    // Use optimized image endpoint for faster loading
+    img.src = getOptimizedImageUrl(currentImage.id, 2048, 85, project?.id);
+
     img.onload = () => {
-      setImage(img);
-      fitToView(img);
-      setIsImageLoading(false);
+      if (!cancelled) {
+        setImage(img);
+        fitToView(img);
+        setIsImageLoading(false);
+      }
     };
-  }, [currentImage?.id, project?.id]);
+
+    img.onerror = () => {
+      console.error('Failed to load image:', currentImage.id);
+      if (!cancelled) {
+        setImage(null);
+        setIsImageLoading(false);
+      }
+    };
+
+    // Cleanup: abort image loading on unmount/change
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+      img.src = ''; // Abort loading
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on currentImage?.id not the full object to avoid unnecessary reloads
+  }, [currentImage?.id, project?.id, isPerformanceLoopActive, fitToView]);
 
   // Resize handler
   useEffect(() => {
@@ -118,6 +166,14 @@ export function ImageCanvas() {
     };
   }, []);
 
+  // Cleanup Konva Stage on unmount to release WebGL/Canvas resources
+  useEffect(() => {
+    const stage = stageRef.current;
+    return () => {
+      stage?.destroy();
+    };
+  }, []);
+
   // Update transformer when selection changes
   useEffect(() => {
     if (!transformerRef.current || !stageRef.current) return;
@@ -130,21 +186,6 @@ export function ImageCanvas() {
     }
     transformerRef.current.getLayer()?.batchDraw();
   }, [selectedAnnotationId, mode]);
-
-  const fitToView = useCallback((img: HTMLImageElement) => {
-    if (!containerRef.current) return;
-
-    const padding = 40;
-    const scaleX = (containerSize.width - padding) / img.width;
-    const scaleY = (containerSize.height - padding) / img.height;
-    const scale = Math.min(scaleX, scaleY, 1);
-
-    const x = (containerSize.width - img.width * scale) / 2;
-    const y = (containerSize.height - img.height * scale) / 2;
-
-    setStageScale(scale);
-    setStagePos({ x, y });
-  }, [containerSize]);
 
   // Wheel zoom
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -232,6 +273,14 @@ export function ImageCanvas() {
     if (mode === 'view' && e.target !== stageRef.current && e.target !== imageRef.current) return;
 
     if (mode === 'draw') {
+      // If clicking on the currently selected annotation's bbox border, don't start drawing
+      // This allows dragging/resizing the selected bbox
+      const targetId = (e.target as Konva.Node).id?.();
+      if (targetId === `annotation-${selectedAnnotationId}`) {
+        // User is clicking on the selected bbox to drag/resize it
+        return;
+      }
+      
       setIsDrawing(true);
       setDrawingBbox({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y });
       selectAnnotation(null);
@@ -380,7 +429,8 @@ export function ImageCanvas() {
             .filter((ann) => ann.image_id === currentImage?.id)
             .map((ann) => {
               const maskCanvas = maskCanvases.get(ann.id);
-              if (!maskCanvas) return null;
+              // Skip invalid canvases (null or 0 dimensions) to prevent Konva drawImage errors
+              if (!maskCanvas || maskCanvas.width === 0 || maskCanvas.height === 0) return null;
 
               return (
                 <KonvaImage
@@ -416,7 +466,9 @@ export function ImageCanvas() {
                   stroke={color}
                   strokeWidth={isSelected ? 3 : 2}
                   fill={isSelected && !maskCanvases.has(ann.id) ? `${color}20` : 'transparent'}
-                  draggable={mode === 'refine'}
+                  fillEnabled={mode !== 'refine' || !isSelected}
+                  hitStrokeWidth={mode === 'refine' && isSelected ? 10 : 0}
+                  draggable={mode === 'refine' || (mode === 'draw' && isSelected)}
                   onClick={() => selectAnnotation(ann.id)}
                   onTap={() => selectAnnotation(ann.id)}
                   onDragEnd={(e) => {

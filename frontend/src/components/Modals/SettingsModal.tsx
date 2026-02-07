@@ -1,4 +1,5 @@
 import { useUIStore, type EmbedModel } from '../../stores/uiStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import type { PropagationMode } from '../../types';
@@ -9,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -20,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { RefreshCw, Trash2 } from 'lucide-react';
 
 export function SettingsModal() {
   const {
@@ -43,18 +46,26 @@ export function SettingsModal() {
     setIouVerify,
     iouThreshold,
     setIouThreshold,
+    propagationFailureMode,
+    setPropagationFailureMode,
     samMaskThreshold,
     setSamMaskThreshold,
-    samMultimaskOutput,
-    setSamMultimaskOutput,
     samMinRegionArea,
     setSamMinRegionArea,
     samKeepLargestRegion,
     setSamKeepLargestRegion,
     samLoaded,
+    performanceMode,
+    setPerformanceMode,
+    addToast,
   } = useUIStore();
 
+  const { resyncImages, project, images } = useProjectStore();
+
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [bulkDeleteAfter, setBulkDeleteAfter] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (showSettingsModal) {
@@ -63,6 +74,55 @@ export function SettingsModal() {
       }).catch(console.error);
     }
   }, [showSettingsModal]);
+
+  const handleRefreshImages = async () => {
+    setIsRefreshing(true);
+    try {
+      const result = await resyncImages();
+      if (result.added > 0 || result.removed > 0) {
+        addToast(`Updated image list: +${result.added} new, -${result.removed} removed`, 'success');
+      } else {
+        addToast('Image list is up to date', 'info');
+      }
+    } catch (err) {
+      addToast('Failed to refresh images', 'error');
+      console.error('Failed to refresh images:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const afterIndex = parseInt(bulkDeleteAfter, 10);
+    if (isNaN(afterIndex) || afterIndex < 0) {
+      addToast('Please enter a valid image number', 'error');
+      return;
+    }
+    if (!project) return;
+
+    const imagesToAffect = images.length - afterIndex - 1;
+    if (imagesToAffect <= 0) {
+      addToast('No images after that index', 'info');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `This will delete ALL annotations from images after #${afterIndex + 1} (${imagesToAffect} images). This cannot be undone. Continue?`
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      const result = await api.deleteAnnotationsAfterIndex(project.id, afterIndex);
+      addToast(`Deleted ${result.count} annotations`, 'success');
+      setBulkDeleteAfter('');
+    } catch (err) {
+      addToast('Failed to delete annotations', 'error');
+      console.error('Bulk delete failed:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // However, since we're using the store to toggle visibility, we can just pass `open={showSettingsModal}` and `onOpenChange={setShowSettingsModal}`
   // if (!showSettingsModal) return null; // Logic handled by Dialog open prop
@@ -75,6 +135,65 @@ export function SettingsModal() {
         </DialogHeader>
 
         <div className="space-y-8 py-4">
+
+          {/* Project Settings */}
+          {project && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+                Project
+                <Separator className="flex-1" />
+              </h3>
+
+              <div className="space-y-3 pl-2">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label>Refresh Image List</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Scan the image directory for new or removed files.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshImages}
+                    disabled={isRefreshing}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    {isRefreshing ? 'Scanning...' : 'Refresh'}
+                  </Button>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <div className="space-y-1">
+                    <Label>Delete Annotations After Image</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Remove all annotations from images after a specific index. Enter the last image number to keep (1-based).
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={images.length}
+                      placeholder={`1-${images.length}`}
+                      value={bulkDeleteAfter}
+                      onChange={(e) => setBulkDeleteAfter(e.target.value)}
+                      className="w-28"
+                    />
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleBulkDelete}
+                      disabled={isDeleting || !bulkDeleteAfter}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      {isDeleting ? 'Deleting...' : 'Delete'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Display Settings */}
           <div className="space-y-4">
@@ -286,6 +405,25 @@ export function SettingsModal() {
               )}
 
               <div className="space-y-2">
+                <Label>On Propagation Failure</Label>
+                <Select
+                  value={propagationFailureMode}
+                  onValueChange={(val) => setPropagationFailureMode(val as 'stop' | 'skip')}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select behavior" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stop">Stop and notify</SelectItem>
+                    <SelectItem value="skip">Skip and continue</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Stop: Stops tracking and shows the failed image. Skip: Continues to next image, excluding failed ones from future references.
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>Peak Candidates (Top-K)</Label>
                   <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
@@ -352,6 +490,32 @@ export function SettingsModal() {
                   <Label htmlFor="stop-tracking">Stop tracking on size mismatch</Label>
                   <p className="text-xs text-muted-foreground">
                     If enabled, tracking halts if the object size deviates beyond the min/max thresholds. Safer but less robust to occlusion.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Performance Settings */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium leading-none flex items-center gap-2 text-muted-foreground">
+              Performance
+              <Separator className="flex-1" />
+            </h3>
+
+            <div className="space-y-6 pl-2">
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="performance-mode"
+                  checked={performanceMode}
+                  onCheckedChange={setPerformanceMode}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="performance-mode">Performance Propagation Mode</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, auto-propagation skips UI rendering for each frame and runs a tight API-only loop. 
+                    The canvas only refreshes when propagation fails and requires your input. 
+                    Dramatically faster for large datasets.
                   </p>
                 </div>
               </div>
