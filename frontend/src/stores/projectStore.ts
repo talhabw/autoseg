@@ -115,37 +115,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   setCurrentImageIndex: (index) => {
-    const { images, project } = get();
+    const { images } = get();
     if (index >= 0 && index < images.length) {
       set({ currentImageIndex: index });
-      // Save to backend (fire and forget)
-      if (project) {
-        api.setSetting('last_image_index', String(index)).catch(() => {});
-      }
     }
   },
 
   nextImage: () => {
-    const { currentImageIndex, images, project } = get();
+    const { currentImageIndex, images } = get();
     if (currentImageIndex < images.length - 1) {
       const newIndex = currentImageIndex + 1;
       set({ currentImageIndex: newIndex });
-      // Save to backend (fire and forget)
-      if (project) {
-        api.setSetting('last_image_index', String(newIndex)).catch(() => {});
-      }
     }
   },
 
   prevImage: () => {
-    const { currentImageIndex, project } = get();
+    const { currentImageIndex } = get();
     if (currentImageIndex > 0) {
       const newIndex = currentImageIndex - 1;
       set({ currentImageIndex: newIndex });
-      // Save to backend (fire and forget)
-      if (project) {
-        api.setSetting('last_image_index', String(newIndex)).catch(() => {});
-      }
     }
   },
 

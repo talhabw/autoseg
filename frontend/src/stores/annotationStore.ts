@@ -13,7 +13,7 @@ interface AnnotationState {
   isLoading: boolean;
 
   // Actions
-  loadAnnotations: (imageId: number) => Promise<void>;
+  loadAnnotations: (imageId: number, signal?: AbortSignal) => Promise<void>;
   loadLabels: () => Promise<void>;
   createAnnotation: (data: {
     image_id: number;
@@ -58,13 +58,19 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
   isLoading: false,
 
   // Actions
-  loadAnnotations: async (imageId) => {
+  loadAnnotations: async (imageId, signal) => {
     set({ isLoading: true });
     try {
-      const annotations = await api.listAnnotations(imageId);
+      const annotations = await api.listAnnotations(imageId, signal);
+      if (signal?.aborted) return;
       set({ annotations, selectedAnnotationId: null, refinePoints: [] });
+    } catch (err) {
+      if (signal?.aborted) return;
+      throw err;
     } finally {
-      set({ isLoading: false });
+      if (!signal?.aborted) {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -149,6 +155,6 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
   },
 
   clearAnnotations: () => {
-    set({ annotations: [], selectedAnnotationId: null, refinePoints: [] });
+    set({ annotations: [], selectedAnnotationId: null, refinePoints: [], isLoading: false });
   },
 }));

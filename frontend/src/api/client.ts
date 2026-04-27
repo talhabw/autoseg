@@ -136,9 +136,10 @@ export async function updateLabel(
 
 // ==================== Annotations ====================
 
-export async function listAnnotations(imageId: number): Promise<Annotation[]> {
+export async function listAnnotations(imageId: number, signal?: AbortSignal): Promise<Annotation[]> {
   const response = await api.get<Annotation[]>('/annotations', {
     params: { image_id: imageId },
+    signal,
   });
   return response.data;
 }
@@ -308,13 +309,15 @@ export async function propagate(
   stopOnSizeMismatch: boolean = true,
   skipDuplicateThreshold: number = 0.9,
   topK: number = 5,
-  bboxHintScale: number = 1.15
+  bboxHintScale: number = 1.15,
+  pruneThinArtifacts: boolean = true
 ): Promise<PropagateResult> {
   const response = await api.post<PropagateResult>('/ml/propagate', {
     source_image_id: sourceImageId,
     target_image_id: targetImageId,
     source_annotation_id: sourceAnnotationId,
     bbox_hint_scale: bboxHintScale,
+    prune_thin_artifacts: pruneThinArtifacts,
     size_min_ratio: sizeMinRatio,
     size_max_ratio: sizeMaxRatio,
     stop_on_size_mismatch: stopOnSizeMismatch,
@@ -371,6 +374,7 @@ export async function propagateAdvanced(
     iouThreshold?: number;
     useCachedMasks?: boolean;
     bboxHintScale?: number;
+    pruneThinArtifacts?: boolean;
     sizeMinRatio?: number;
     sizeMaxRatio?: number;
     stopOnSizeMismatch?: boolean;
@@ -387,6 +391,7 @@ export async function propagateAdvanced(
     iou_threshold: options.iouThreshold ?? 0.3,
     use_cached_masks: options.useCachedMasks ?? true,
     bbox_hint_scale: options.bboxHintScale ?? 1.15,
+    prune_thin_artifacts: options.pruneThinArtifacts ?? true,
     size_min_ratio: options.sizeMinRatio ?? 0.8,
     size_max_ratio: options.sizeMaxRatio ?? 1.2,
     stop_on_size_mismatch: options.stopOnSizeMismatch ?? true,

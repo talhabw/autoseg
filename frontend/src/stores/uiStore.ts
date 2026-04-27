@@ -33,6 +33,7 @@ interface UIState {
   stopOnSizeMismatch: boolean;  // If true, stop propagation when size differs; if false, use fallback
   topK: number; // Number of peak candidates to try during propagation
   bboxHintScale: number; // Scale factor applied to SAM bbox hints during tracking
+  pruneThinArtifacts: boolean; // Remove thin tracking branches before saving/showing masks
   propagationMode: PropagationMode; // 'peak', 'dense', or 'auto'
   iouVerify: boolean; // Whether to verify results against dense prediction
   iouThreshold: number; // Minimum IoU with dense prediction to accept
@@ -90,6 +91,7 @@ interface UIState {
   setStopOnSizeMismatch: (stop: boolean) => void;
   setTopK: (k: number) => void;
   setBboxHintScale: (scale: number) => void;
+  setPruneThinArtifacts: (enabled: boolean) => void;
   setPropagationMode: (mode: PropagationMode) => void;
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
@@ -127,6 +129,7 @@ export const useUIStore = create<UIState>()(
       stopOnSizeMismatch: true,  // Default: stop on size mismatch (safer)
       topK: 5, // Try 5 peak candidates by default
       bboxHintScale: 1.15, // Slightly padded hint to keep SAM localized during tracking
+      pruneThinArtifacts: true, // Default: clean thin tracking whiskers before returning results
       propagationMode: 'auto', // Default: auto mode tries peak then dense
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
@@ -240,6 +243,7 @@ export const useUIStore = create<UIState>()(
       setStopOnSizeMismatch: (stop) => set({ stopOnSizeMismatch: stop }),
       setTopK: (k) => set({ topK: Math.max(1, Math.min(10, k)) }),
       setBboxHintScale: (scale) => set({ bboxHintScale: Math.max(0.5, Math.min(3.0, scale)) }),
+      setPruneThinArtifacts: (enabled) => set({ pruneThinArtifacts: enabled }),
       setPropagationMode: (mode) => set({ propagationMode: mode }),
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
@@ -336,6 +340,7 @@ export const useUIStore = create<UIState>()(
         stopOnSizeMismatch: state.stopOnSizeMismatch,
         topK: state.topK,
         bboxHintScale: state.bboxHintScale,
+        pruneThinArtifacts: state.pruneThinArtifacts,
         propagationMode: state.propagationMode,
         iouVerify: state.iouVerify,
         iouThreshold: state.iouThreshold,

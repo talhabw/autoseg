@@ -42,6 +42,8 @@ export function SettingsModal() {
     setTopK,
     bboxHintScale,
     setBboxHintScale,
+    pruneThinArtifacts,
+    setPruneThinArtifacts,
     propagationMode,
     setPropagationMode,
     iouVerify,
@@ -461,6 +463,20 @@ export function SettingsModal() {
                 <p className="text-xs text-muted-foreground">
                   Controls how much the SAM tracking hint box is padded. Lower = tighter and more restrictive. Higher = looser and more rotation-tolerant.
                 </p>
+              </div>
+
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="prune-thin-artifacts"
+                  checked={pruneThinArtifacts}
+                  onCheckedChange={setPruneThinArtifacts}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="prune-thin-artifacts">Prune Thin Tracking Artifacts</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Removes small thin branches that SAM sometimes adds to tracked masks before the result is shown and saved.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2">

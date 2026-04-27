@@ -234,6 +234,52 @@ def remove_small_regions(
     return cleaned_mask
 
 
+def prune_thin_artifacts(
+    mask: np.ndarray,
+    kernel_size: int = 3,
+    min_area_ratio: float = 0.6,
+) -> np.ndarray:
+    """Remove thin connected protrusions from a mask conservatively.
+
+    This is intended for tracked masks that occasionally grow thin whisker-like
+    branches off the main object. A small opening removes narrow attachments,
+    then a closing restores the main body. If that would damage the mask too
+    much, the original mask is returned unchanged.
+    """
+    import cv2
+
+    binary_mask = (mask > 0).astype(np.uint8)
+    original_area = int(binary_mask.sum())
+
+    if original_area == 0:
+        return binary_mask
+
+    kernel_size = max(1, int(kernel_size))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    if kernel_size <= 1:
+        return binary_mask
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    opened_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+
+    if int(opened_mask.sum()) == 0:
+        return binary_mask
+
+    cleaned_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel)
+    cleaned_mask = remove_small_regions(cleaned_mask, min_area=0, keep_largest=True)
+
+    cleaned_area = int(cleaned_mask.sum())
+    if cleaned_area == 0:
+        return binary_mask
+
+    if cleaned_area / original_area < min_area_ratio:
+        return binary_mask
+
+    return cleaned_mask.astype(np.uint8)
+
+
 def resize_mask(mask: np.ndarray, target_size: tuple[int, int]) -> np.ndarray:
     """
     Resize a binary mask to target size.

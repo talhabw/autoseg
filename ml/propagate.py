@@ -379,6 +379,29 @@ class PropagateService:
         self.segment_service.set_image(target_image, target_image_id)
         return self.segment_service.segment_with_bbox(bbox_xyxy=target_bbox)
 
+    def _postprocess_tracked_mask(
+        self,
+        mask: np.ndarray,
+        bbox: list[float],
+        prune_thin_artifacts: bool,
+    ) -> tuple[np.ndarray, list[float]]:
+        """Apply conservative tracking-only mask cleanup and recompute bbox."""
+        if not prune_thin_artifacts:
+            return mask, bbox
+
+        from core.masks import (
+            mask_to_bbox,
+            prune_thin_artifacts as prune_mask_artifacts,
+        )
+
+        cleaned_mask = prune_mask_artifacts(mask)
+        cleaned_bbox = mask_to_bbox(cleaned_mask)
+
+        if cleaned_bbox == [0, 0, 0, 0]:
+            return mask, bbox
+
+        return cleaned_mask, cleaned_bbox
+
     def propagate_dense(
         self,
         source_mask: np.ndarray,
@@ -480,6 +503,7 @@ class PropagateService:
         iou_threshold: float = 0.3,
         use_cached_masks: bool = False,
         bbox_hint_scale: float = 1.15,
+        prune_thin_artifacts: bool = True,
         **kwargs,
     ) -> Optional[PropagationResult]:
         """
@@ -636,6 +660,11 @@ class PropagateService:
                     mask, sam_score, bbox = self.segment_service.segment_with_point(
                         center_x, center_y, bbox_hint=bbox_hint
                     )
+                    mask, bbox = self._postprocess_tracked_mask(
+                        mask,
+                        bbox,
+                        prune_thin_artifacts,
+                    )
 
                     # Verify IoU
                     iou_score = mask_iou(mask, dense_mask)
@@ -645,6 +674,11 @@ class PropagateService:
                                 target_image,
                                 bbox,
                                 target_image_id,
+                            )
+                            mask, bbox = self._postprocess_tracked_mask(
+                                mask,
+                                bbox,
+                                prune_thin_artifacts,
                             )
                             iou_score = mask_iou(mask, dense_mask)
                         except Exception as e:
@@ -708,6 +742,7 @@ class PropagateService:
         target_image_id: Optional[str] = None,
         annotation_id: Optional[int] = None,
         bbox_hint_scale: float = 1.15,
+        prune_thin_artifacts: bool = True,
         top_k: int = 5,
         min_score: float = 0.5,
         search_expansion: float = 0.3,
@@ -855,6 +890,11 @@ class PropagateService:
                     point_y,
                     bbox_hint=bbox_hint,
                 )
+                mask, refined_bbox = self._postprocess_tracked_mask(
+                    mask,
+                    refined_bbox,
+                    prune_thin_artifacts,
+                )
 
                 # Verify with embedding - compute descriptor of result
                 target_descriptor = self.embed_service.get_object_descriptor(
@@ -943,6 +983,11 @@ class PropagateService:
                         selected_bbox,
                         target_image_id,
                     )
+                )
+                refined_mask, refined_bbox = self._postprocess_tracked_mask(
+                    refined_mask,
+                    refined_bbox,
+                    prune_thin_artifacts,
                 )
                 refined_descriptor = self.embed_service.get_object_descriptor(
                     target_image,

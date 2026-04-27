@@ -47,6 +47,9 @@ let _pendingAutoNext = false; // Flag to trigger auto-next after annotations loa
 const _sessionFailedImageIds = new Set<number>(); // Track failed images in current session (skip mode)
 let _performancePropagationActive = false; // Performance mode loop active
 
+const NAVIGATION_LOAD_DEBOUNCE_MS = 90;
+const LAST_IMAGE_INDEX_SAVE_DEBOUNCE_MS = 180;
+
 // Export function to stop auto-tracking (used by UI components)
 // eslint-disable-next-line react-refresh/only-export-components
 export function stopAutoTracking() {
@@ -150,7 +153,7 @@ async function runPerformancePropagation() {
     const failedLabels = new Set<number>();
     let duplicateSkipCount = 0;
 
-    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
     for (const ann of sourceAnnotations) {
       if (!ann.bbox) continue;
@@ -165,7 +168,7 @@ async function runPerformancePropagation() {
             sourceImageId, targetImageId, ann.id,
             {
               mode: propagationMode, iouVerify, iouThreshold,
-              useCachedMasks: true, bboxHintScale, sizeMinRatio, sizeMaxRatio,
+              useCachedMasks: true, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
               stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
             }
           );
@@ -173,7 +176,7 @@ async function runPerformancePropagation() {
           result = await api.propagate(
             sourceImageId, targetImageId, ann.id,
             sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch,
-            0.9, topK, bboxHintScale
+            0.9, topK, bboxHintScale, pruneThinArtifacts
           );
         }
 
@@ -230,7 +233,7 @@ async function runPerformancePropagation() {
               fallbackResult.annotation.image_id, targetImageId, fallbackResult.annotation.id,
               {
                 mode: propagationMode, iouVerify, iouThreshold,
-                useCachedMasks: true, bboxHintScale, sizeMinRatio, sizeMaxRatio,
+                useCachedMasks: true, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
                 stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
               }
             );
@@ -409,32 +412,67 @@ function AppContent() {
 
   // Load annotations when image changes
   useEffect(() => {
-    if (currentImage) {
-      loadAnnotations(currentImage.id).then(() => {
-        // Check if we should continue auto-propagation
-        if (_pendingAutoNext) {
-          _pendingAutoNext = false;
-          const { autoNext, trackModeEnabled } = useUIStore.getState();
-          const { currentImageIndex: idx, images: imgs } = useProjectStore.getState();
-          
-          if (autoNext && trackModeEnabled && idx < imgs.length - 1 && !_propagationLock) {
-            const { performanceMode } = useUIStore.getState();
-            if (performanceMode && !_performancePropagationActive) {
-              // Performance mode: run tight loop without UI updates
-              runPerformancePropagation();
-            } else if (!performanceMode) {
-              // Normal mode: small delay to let React render
-              setTimeout(() => handlePropagateAndNext(), 50);
-            }
-            // If performance propagation is already active, do nothing (it manages its own loop)
-          }
-        }
-      });
-    } else {
+    if (!currentImage) {
       clearAnnotations();
+      return;
     }
+
+    clearAnnotations();
+
+    let cancelled = false;
+    const abortController = new AbortController();
+    const loadDelay = _pendingAutoNext ? 0 : NAVIGATION_LOAD_DEBOUNCE_MS;
+
+    const timeoutId = window.setTimeout(() => {
+      loadAnnotations(currentImage.id, abortController.signal)
+        .then(() => {
+          if (cancelled || abortController.signal.aborted) return;
+
+          // Check if we should continue auto-propagation
+          if (_pendingAutoNext) {
+            _pendingAutoNext = false;
+            const { autoNext, trackModeEnabled } = useUIStore.getState();
+            const { currentImageIndex: idx, images: imgs } = useProjectStore.getState();
+
+            if (autoNext && trackModeEnabled && idx < imgs.length - 1 && !_propagationLock) {
+              const { performanceMode } = useUIStore.getState();
+              if (performanceMode && !_performancePropagationActive) {
+                // Performance mode: run tight loop without UI updates
+                runPerformancePropagation();
+              } else if (!performanceMode) {
+                // Normal mode: small delay to let React render
+                setTimeout(() => handlePropagateAndNext(), 50);
+              }
+              // If performance propagation is already active, do nothing (it manages its own loop)
+            }
+          }
+        })
+        .catch((err) => {
+          if (abortController.signal.aborted) return;
+          console.error('Failed to load annotations:', err);
+        });
+    }, loadDelay);
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      window.clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentImage?.id]); // Only re-run on image change; callbacks read fresh store state
+
+  // Persist last visited image index after navigation settles.
+  useEffect(() => {
+    if (!project || !currentImage) return;
+
+    const timeoutId = window.setTimeout(() => {
+      api.setSetting('last_image_index', String(currentImageIndex)).catch(() => {});
+    }, LAST_IMAGE_INDEX_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [project?.id, currentImage?.id, currentImageIndex]);
 
   // Load labels when project changes
   useEffect(() => {
@@ -643,7 +681,7 @@ function AppContent() {
           console.log(`${logPrefix} Propagating annotation ${i + 1}/${sourceAnnotations.length} (id=${ann.id})`);
 
           // Get propagation settings from store
-          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
           
           // Use advanced propagation API when mode is not 'peak' or IoU verification is enabled
           const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
@@ -660,6 +698,7 @@ function AppContent() {
                 iouThreshold,
                 useCachedMasks: true,
                 bboxHintScale,
+                pruneThinArtifacts,
                 sizeMinRatio,
                 sizeMaxRatio,
                 stopOnSizeMismatch,
@@ -677,7 +716,8 @@ function AppContent() {
               stopOnSizeMismatch,
               0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
               topK,
-              bboxHintScale
+              bboxHintScale,
+              pruneThinArtifacts
             );
           }
 
@@ -767,7 +807,7 @@ function AppContent() {
               console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index} (attempt ${attempt + 1})`);
 
               // Get settings again
-              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
               // Propagate from the fallback reference
               const result = await api.propagateAdvanced(
@@ -780,6 +820,7 @@ function AppContent() {
                   iouThreshold,
                   useCachedMasks: true,
                   bboxHintScale,
+                  pruneThinArtifacts,
                   sizeMinRatio,
                   sizeMaxRatio,
                   stopOnSizeMismatch,
