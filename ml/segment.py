@@ -393,7 +393,9 @@ class SegmentService:
 
         box = None
         if bbox_hint:
-            box = np.array(bbox_hint)
+            if len(bbox_hint) != 4:
+                raise ValueError(f"bbox_hint must have 4 values, got {len(bbox_hint)}")
+            box = np.array(bbox_hint, dtype=np.float32).reshape(1, 4)
 
         # Run prediction - use settings for multimask_output
         multimask = self._settings.get("multimask_output", True)

@@ -77,6 +77,7 @@ class PropagateRequest(BaseModel):
     source_image_id: int
     target_image_id: int
     source_annotation_id: int
+    bbox_hint_scale: float = 1.15  # Scale applied to the tracking bbox hint
     size_min_ratio: float = 0.8  # Min allowed size ratio (e.g., 0.8x)
     size_max_ratio: float = 1.2  # Max allowed size ratio (e.g., 1.2x)
     stop_on_size_mismatch: bool = (
@@ -468,6 +469,7 @@ async def propagate(request: PropagateRequest):
             source_image_id=str(request.source_image_id),
             target_image_id=str(request.target_image_id),
             annotation_id=request.source_annotation_id,
+            bbox_hint_scale=max(0.5, min(3.0, request.bbox_hint_scale)),
             top_k=request.top_k,
             size_min_ratio=request.size_min_ratio,
             size_max_ratio=request.size_max_ratio,
@@ -578,6 +580,7 @@ class PropagateAdvancedRequest(BaseModel):
     iou_verify: bool = True
     iou_threshold: float = 0.3
     use_cached_masks: bool = True
+    bbox_hint_scale: float = 1.15
     size_min_ratio: float = 0.8
     size_max_ratio: float = 1.2
     stop_on_size_mismatch: bool = True
@@ -731,6 +734,7 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
             iou_verify=request.iou_verify,
             iou_threshold=request.iou_threshold,
             use_cached_masks=request.use_cached_masks,
+            bbox_hint_scale=max(0.5, min(3.0, request.bbox_hint_scale)),
             size_min_ratio=request.size_min_ratio,
             size_max_ratio=request.size_max_ratio,
             stop_on_size_mismatch=request.stop_on_size_mismatch,

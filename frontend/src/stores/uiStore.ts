@@ -32,6 +32,7 @@ interface UIState {
   sizeMaxRatio: number; // Max allowed size ratio (e.g. 1.2)
   stopOnSizeMismatch: boolean;  // If true, stop propagation when size differs; if false, use fallback
   topK: number; // Number of peak candidates to try during propagation
+  bboxHintScale: number; // Scale factor applied to SAM bbox hints during tracking
   propagationMode: PropagationMode; // 'peak', 'dense', or 'auto'
   iouVerify: boolean; // Whether to verify results against dense prediction
   iouThreshold: number; // Minimum IoU with dense prediction to accept
@@ -88,6 +89,7 @@ interface UIState {
   setSizeMaxRatio: (ratio: number) => void;
   setStopOnSizeMismatch: (stop: boolean) => void;
   setTopK: (k: number) => void;
+  setBboxHintScale: (scale: number) => void;
   setPropagationMode: (mode: PropagationMode) => void;
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
@@ -124,6 +126,7 @@ export const useUIStore = create<UIState>()(
       sizeMaxRatio: 2.0, // Max allowed size ratio (2.0x)
       stopOnSizeMismatch: true,  // Default: stop on size mismatch (safer)
       topK: 5, // Try 5 peak candidates by default
+      bboxHintScale: 1.15, // Slightly padded hint to keep SAM localized during tracking
       propagationMode: 'auto', // Default: auto mode tries peak then dense
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
@@ -236,6 +239,7 @@ export const useUIStore = create<UIState>()(
       setSizeMaxRatio: (ratio) => set({ sizeMaxRatio: Math.max(0.1, Math.min(5.0, ratio)) }),
       setStopOnSizeMismatch: (stop) => set({ stopOnSizeMismatch: stop }),
       setTopK: (k) => set({ topK: Math.max(1, Math.min(10, k)) }),
+      setBboxHintScale: (scale) => set({ bboxHintScale: Math.max(0.5, Math.min(3.0, scale)) }),
       setPropagationMode: (mode) => set({ propagationMode: mode }),
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
@@ -331,6 +335,7 @@ export const useUIStore = create<UIState>()(
         sizeMaxRatio: state.sizeMaxRatio,
         stopOnSizeMismatch: state.stopOnSizeMismatch,
         topK: state.topK,
+        bboxHintScale: state.bboxHintScale,
         propagationMode: state.propagationMode,
         iouVerify: state.iouVerify,
         iouThreshold: state.iouThreshold,

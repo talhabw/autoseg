@@ -150,7 +150,7 @@ async function runPerformancePropagation() {
     const failedLabels = new Set<number>();
     let duplicateSkipCount = 0;
 
-    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
     for (const ann of sourceAnnotations) {
       if (!ann.bbox) continue;
@@ -165,7 +165,7 @@ async function runPerformancePropagation() {
             sourceImageId, targetImageId, ann.id,
             {
               mode: propagationMode, iouVerify, iouThreshold,
-              useCachedMasks: true, sizeMinRatio, sizeMaxRatio,
+              useCachedMasks: true, bboxHintScale, sizeMinRatio, sizeMaxRatio,
               stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
             }
           );
@@ -173,7 +173,7 @@ async function runPerformancePropagation() {
           result = await api.propagate(
             sourceImageId, targetImageId, ann.id,
             sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch,
-            0.9, topK
+            0.9, topK, bboxHintScale
           );
         }
 
@@ -230,7 +230,7 @@ async function runPerformancePropagation() {
               fallbackResult.annotation.image_id, targetImageId, fallbackResult.annotation.id,
               {
                 mode: propagationMode, iouVerify, iouThreshold,
-                useCachedMasks: true, sizeMinRatio, sizeMaxRatio,
+                useCachedMasks: true, bboxHintScale, sizeMinRatio, sizeMaxRatio,
                 stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
               }
             );
@@ -643,7 +643,7 @@ function AppContent() {
           console.log(`${logPrefix} Propagating annotation ${i + 1}/${sourceAnnotations.length} (id=${ann.id})`);
 
           // Get propagation settings from store
-          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
           
           // Use advanced propagation API when mode is not 'peak' or IoU verification is enabled
           const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
@@ -659,6 +659,7 @@ function AppContent() {
                 iouVerify,
                 iouThreshold,
                 useCachedMasks: true,
+                bboxHintScale,
                 sizeMinRatio,
                 sizeMaxRatio,
                 stopOnSizeMismatch,
@@ -675,7 +676,8 @@ function AppContent() {
               sizeMaxRatio,
               stopOnSizeMismatch,
               0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
-              topK
+              topK,
+              bboxHintScale
             );
           }
 
@@ -765,7 +767,7 @@ function AppContent() {
               console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index} (attempt ${attempt + 1})`);
 
               // Get settings again
-              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
               // Propagate from the fallback reference
               const result = await api.propagateAdvanced(
@@ -777,6 +779,7 @@ function AppContent() {
                   iouVerify,
                   iouThreshold,
                   useCachedMasks: true,
+                  bboxHintScale,
                   sizeMinRatio,
                   sizeMaxRatio,
                   stopOnSizeMismatch,

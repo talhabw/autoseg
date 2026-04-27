@@ -40,6 +40,8 @@ export function SettingsModal() {
     setStopOnSizeMismatch,
     topK,
     setTopK,
+    bboxHintScale,
+    setBboxHintScale,
     propagationMode,
     setPropagationMode,
     iouVerify,
@@ -439,6 +441,25 @@ export function SettingsModal() {
                 />
                 <p className="text-xs text-muted-foreground">
                   Number of peak locations to try when matching. Higher = more thorough but slower.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>BBox Hint Scale</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {bboxHintScale.toFixed(2)}x
+                  </span>
+                </div>
+                <Slider
+                  min={50}
+                  max={300}
+                  step={5}
+                  value={[bboxHintScale * 100]}
+                  onValueChange={(vals) => setBboxHintScale(vals[0] / 100)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Controls how much the SAM tracking hint box is padded. Lower = tighter and more restrictive. Higher = looser and more rotation-tolerant.
                 </p>
               </div>
 

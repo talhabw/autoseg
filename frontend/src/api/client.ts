@@ -307,12 +307,14 @@ export async function propagate(
   sizeMaxRatio: number = 1.2,
   stopOnSizeMismatch: boolean = true,
   skipDuplicateThreshold: number = 0.9,
-  topK: number = 5
+  topK: number = 5,
+  bboxHintScale: number = 1.15
 ): Promise<PropagateResult> {
   const response = await api.post<PropagateResult>('/ml/propagate', {
     source_image_id: sourceImageId,
     target_image_id: targetImageId,
     source_annotation_id: sourceAnnotationId,
+    bbox_hint_scale: bboxHintScale,
     size_min_ratio: sizeMinRatio,
     size_max_ratio: sizeMaxRatio,
     stop_on_size_mismatch: stopOnSizeMismatch,
@@ -368,6 +370,7 @@ export async function propagateAdvanced(
     iouVerify?: boolean;
     iouThreshold?: number;
     useCachedMasks?: boolean;
+    bboxHintScale?: number;
     sizeMinRatio?: number;
     sizeMaxRatio?: number;
     stopOnSizeMismatch?: boolean;
@@ -383,6 +386,7 @@ export async function propagateAdvanced(
     iou_verify: options.iouVerify ?? true,
     iou_threshold: options.iouThreshold ?? 0.3,
     use_cached_masks: options.useCachedMasks ?? true,
+    bbox_hint_scale: options.bboxHintScale ?? 1.15,
     size_min_ratio: options.sizeMinRatio ?? 0.8,
     size_max_ratio: options.sizeMaxRatio ?? 1.2,
     stop_on_size_mismatch: options.stopOnSizeMismatch ?? true,
@@ -484,4 +488,3 @@ export async function getHomeDirectory(): Promise<{ path: string }> {
 }
 
 export default api;
-
