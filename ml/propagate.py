@@ -369,6 +369,16 @@ class PropagateService:
         self.embed_service = None
         self.segment_service = None
 
+    def _rerun_segmentation_with_bbox(
+        self,
+        target_image: np.ndarray,
+        target_bbox: list[float],
+        target_image_id: Optional[str] = None,
+    ) -> tuple[np.ndarray, float, list[float]]:
+        """Mirror the manual 'S' flow by re-segmenting from the final bbox."""
+        self.segment_service.set_image(target_image, target_image_id)
+        return self.segment_service.segment_with_bbox(bbox_xyxy=target_bbox)
+
     def propagate_dense(
         self,
         source_mask: np.ndarray,
@@ -629,6 +639,17 @@ class PropagateService:
 
                     # Verify IoU
                     iou_score = mask_iou(mask, dense_mask)
+                    if iou_score >= iou_threshold:
+                        try:
+                            mask, sam_score, bbox = self._rerun_segmentation_with_bbox(
+                                target_image,
+                                bbox,
+                                target_image_id,
+                            )
+                            iou_score = mask_iou(mask, dense_mask)
+                        except Exception as e:
+                            logger.warning(f"Dense bbox-pass refinement failed: {e}")
+
                     if iou_score >= iou_threshold:
                         area_ratio = (
                             mask.sum() / source_area if source_area > 0 else 1.0
@@ -903,6 +924,66 @@ class PropagateService:
         logger.info("======================================")
 
         # Select best result
+        def finalize_selected_result(
+            selected_result: tuple[list[float], np.ndarray, float, float, float],
+            fallback_used: bool,
+        ) -> tuple[list[float], np.ndarray, float, bool, float]:
+            (
+                selected_bbox,
+                selected_mask,
+                selected_confidence,
+                _,
+                selected_area_ratio,
+            ) = selected_result
+
+            try:
+                refined_mask, refined_sam_score, refined_bbox = (
+                    self._rerun_segmentation_with_bbox(
+                        target_image,
+                        selected_bbox,
+                        target_image_id,
+                    )
+                )
+                refined_descriptor = self.embed_service.get_object_descriptor(
+                    target_image,
+                    refined_bbox,
+                    mask=refined_mask,
+                    image_id=target_image_id,
+                )
+                refined_similarity = self.embed_service.compute_similarity(
+                    source_descriptor, refined_descriptor
+                )
+                refined_confidence = 0.6 * refined_similarity + 0.4 * refined_sam_score
+                refined_area = (refined_bbox[2] - refined_bbox[0]) * (
+                    refined_bbox[3] - refined_bbox[1]
+                )
+                refined_area_ratio = (
+                    refined_area / source_area if source_area > 0 else 1.0
+                )
+
+                logger.info(
+                    "Final bbox-pass refinement: "
+                    f"conf={refined_confidence:.3f}, area_ratio={refined_area_ratio:.2f}, "
+                    f"bbox={[int(x) for x in refined_bbox]}"
+                )
+
+                return (
+                    refined_bbox,
+                    refined_mask,
+                    refined_confidence,
+                    fallback_used,
+                    refined_area_ratio,
+                )
+            except Exception as e:
+                logger.warning(f"Final bbox-pass refinement failed: {e}")
+                return (
+                    selected_bbox,
+                    selected_mask,
+                    selected_confidence,
+                    fallback_used,
+                    selected_area_ratio,
+                )
+
         if size_acceptable_results:
             # Return best similarity among size-acceptable results
             best = max(
@@ -911,13 +992,7 @@ class PropagateService:
             logger.info(
                 f"Propagation succeeded with size-acceptable result: sim={best[3]:.3f}, ratio={best[4]:.2f}"
             )
-            return (
-                best[0],
-                best[1],
-                best[2],
-                False,
-                best[4],
-            )  # fallback_used = False, area_ratio
+            return finalize_selected_result(best, False)
 
         if all_valid_results and not stop_on_size_mismatch:
             # Fallback: return best similarity overall (only if allowed)
@@ -925,13 +1000,7 @@ class PropagateService:
             logger.info(
                 f"Propagation using fallback (size mismatch): sim={best[3]:.3f}, ratio={best[4]:.2f}"
             )
-            return (
-                best[0],
-                best[1],
-                best[2],
-                True,
-                best[4],
-            )  # fallback_used = True, area_ratio
+            return finalize_selected_result(best, True)
 
         if all_valid_results and stop_on_size_mismatch:
             best = max(all_valid_results, key=lambda x: x[3])
