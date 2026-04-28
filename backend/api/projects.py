@@ -6,11 +6,10 @@ import os
 import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Optional
 
 from core.store import ProjectStore
 from core.models import Project
-from backend.yolo_autoannotate import YoloAnnotateOptions, run_yolo_on_project
 
 router = APIRouter()
 
@@ -19,26 +18,10 @@ _current_store: Optional[ProjectStore] = None
 _current_project: Optional[Project] = None
 
 
-class YoloPreprocessRequest(BaseModel):
-    enabled: bool = False
-    model_path: str = ""
-    confidence: float = 0.25
-    iou: float = 0.7
-    imgsz: Optional[int] = None
-    max_detections: int = 300
-    device: str = "cuda"
-    class_filter: Optional[list[str]] = None
-    use_sam: bool = True
-    use_yolo_masks: bool = True
-    status: str = "pending"
-    duplicate_threshold: float = 0.85
-
-
 class CreateProjectRequest(BaseModel):
     project_dir: str
     image_dir: str
     name: str
-    yolo_preprocess: Optional[YoloPreprocessRequest] = None
 
 
 class ProjectResponse(BaseModel):
@@ -46,22 +29,15 @@ class ProjectResponse(BaseModel):
     name: str
     root_dir: str
     image_count: int
-    yolo_summary: Optional[dict[str, Any]] = None
 
     @classmethod
-    def from_project(
-        cls,
-        project: Project,
-        store: ProjectStore,
-        yolo_summary: Optional[dict[str, Any]] = None,
-    ):
+    def from_project(cls, project: Project, store: ProjectStore):
         count = store.get_image_count(project.id)
         return cls(
             id=project.id,
             name=project.name,
             root_dir=project.root_dir,
             image_count=count,
-            yolo_summary=yolo_summary,
         )
 
 
@@ -85,14 +61,6 @@ async def create_project(request: CreateProjectRequest):
     global _current_store, _current_project
 
     try:
-        yolo_config = request.yolo_preprocess
-        if yolo_config and yolo_config.enabled:
-            model_path = os.path.expanduser(yolo_config.model_path.strip())
-            if not model_path:
-                raise ValueError("YOLO preprocessing requires a model path")
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"YOLO model not found: {model_path}")
-
         project = ProjectStore.create_project(
             project_dir=request.project_dir,
             image_dir=request.image_dir,
@@ -101,32 +69,9 @@ async def create_project(request: CreateProjectRequest):
         _current_store = ProjectStore(project.db_path)
         _current_project = project
 
-        yolo_summary = None
-        if yolo_config and yolo_config.enabled:
-            options = _yolo_options_from_request(yolo_config)
-            summary = run_yolo_on_project(_current_store, project.id, options)
-            yolo_summary = summary.to_dict()
-
-        return ProjectResponse.from_project(project, _current_store, yolo_summary)
+        return ProjectResponse.from_project(project, _current_store)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-def _yolo_options_from_request(request: YoloPreprocessRequest) -> YoloAnnotateOptions:
-    return YoloAnnotateOptions(
-        model_path=os.path.expanduser(request.model_path.strip()),
-        confidence=max(0.0, min(1.0, request.confidence)),
-        iou=max(0.0, min(1.0, request.iou)),
-        imgsz=request.imgsz,
-        max_detections=max(1, request.max_detections),
-        device=request.device,
-        class_filter=request.class_filter,
-        use_sam=request.use_sam,
-        use_yolo_masks=request.use_yolo_masks,
-        status=request.status,
-        duplicate_threshold=max(0.0, min(1.0, request.duplicate_threshold)),
-        replace_existing_yolo=False,
-    )
 
 
 class OpenProjectRequest(BaseModel):

@@ -71,7 +71,15 @@ def run_yolo_on_project(
 ) -> YoloRunSummary:
     """Run YOLO annotation on every image in a project."""
     summary = YoloRunSummary()
-    for image in store.list_images(project_id):
+    images = store.list_images(project_id)
+    logger.info("Starting YOLO preprocessing for %s images", len(images))
+    for index, image in enumerate(images, start=1):
+        logger.info(
+            "YOLO preprocessing image %s/%s: %s",
+            index,
+            len(images),
+            image.path,
+        )
         image_summary = run_yolo_on_image(store, image.id, options)
         summary.add_image(image_summary)
         summary.per_image.append(
@@ -85,6 +93,23 @@ def run_yolo_on_project(
                 "sam_failures": image_summary.sam_failures,
             }
         )
+        logger.info(
+            "YOLO image %s/%s complete: created=%s detections=%s duplicates=%s sam_failures=%s",
+            index,
+            len(images),
+            image_summary.created,
+            image_summary.detections,
+            image_summary.skipped_duplicates,
+            image_summary.sam_failures,
+        )
+    logger.info(
+        "YOLO preprocessing complete: created=%s detections=%s duplicates=%s failed=%s sam_failures=%s",
+        summary.created,
+        summary.detections,
+        summary.skipped_duplicates,
+        summary.failed,
+        summary.sam_failures,
+    )
     return summary
 
 
@@ -112,12 +137,24 @@ def run_yolo_on_image(
     )
 
     summary = YoloRunSummary(images_processed=1, detections=len(detections))
+    logger.info(
+        "YOLO found %s detections for image_id=%s",
+        len(detections),
+        image_id,
+    )
     existing_annotations = store.list_annotations(image_id)
     batch_bboxes: list[list[float]] = []
     segment_service = None
     image_rgb = None
 
     for detection in detections:
+        logger.info(
+            "Processing YOLO detection image_id=%s class=%s conf=%.3f bbox=%s",
+            image_id,
+            detection.class_name,
+            detection.confidence,
+            [round(v, 1) for v in detection.bbox_xyxy],
+        )
         if _has_duplicate(
             detection.bbox_xyxy,
             existing_annotations,

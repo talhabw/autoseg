@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
+import { useAnnotationStore } from '../../stores/annotationStore';
 import { useUIStore } from '../../stores/uiStore';
+import * as api from '../../api/client';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +24,7 @@ export function CreateProjectModal() {
     showCreateProjectModal,
     setShowCreateProjectModal,
     setStatusMessage,
+    addToast,
     yoloModelPath,
     setYoloModelPath,
     yoloConfidence,
@@ -106,38 +109,59 @@ export function CreateProjectModal() {
 
     setIsLoading(true);
     try {
-      const project = await createProject(
-        projectDir,
-        imageDir,
-        finalName,
-        runYoloPreprocess
-          ? {
-              enabled: true,
-              modelPath: yoloModelPath.trim(),
-              confidence: yoloConfidence,
-              iou: yoloIou,
-              maxDetections: yoloMaxDetections,
-              device: yoloDevice,
-              classFilter: parseClassFilter(yoloClassFilter),
-              useSam: yoloUseSam,
-              useYoloMasks: yoloUseYoloMasks,
-              status: 'pending',
-              duplicateThreshold: 0.85,
-            }
-          : undefined
-      );
-
-      const summary = project.yolo_summary as { created?: number; detections?: number } | null | undefined;
-      setStatusMessage(
-        summary
-          ? `Created project: ${finalName} (${summary.created ?? 0}/${summary.detections ?? 0} YOLO annotations)`
-          : `Created project: ${finalName}`
-      );
+      await createProject(projectDir, imageDir, finalName);
+      setStatusMessage(`Created project: ${finalName}`);
       setShowCreateProjectModal(false);
+
+      if (runYoloPreprocess) {
+        const options: api.YoloAnnotateOptions = {
+          modelPath: yoloModelPath.trim(),
+          confidence: yoloConfidence,
+          iou: yoloIou,
+          maxDetections: yoloMaxDetections,
+          device: yoloDevice,
+          classFilter: parseClassFilter(yoloClassFilter),
+          useSam: yoloUseSam,
+          useYoloMasks: yoloUseYoloMasks,
+          status: 'pending',
+          duplicateThreshold: 0.85,
+          replaceExistingYolo: false,
+        };
+        void runYoloPreprocessForProject(finalName, options);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const runYoloPreprocessForProject = async (
+    projectName: string,
+    options: api.YoloAnnotateOptions
+  ) => {
+    setStatusMessage('Running YOLO preprocessing...');
+    addToast('Project created. YOLO preprocessing is running in the background.', 'info', 4000);
+
+    try {
+      const summary = await api.runYoloOnProject(options);
+      await useAnnotationStore.getState().loadLabels();
+
+      const currentImage = useProjectStore.getState().currentImage;
+      if (currentImage) {
+        await useAnnotationStore.getState().loadAnnotations(currentImage.id);
+      }
+
+      setStatusMessage(`YOLO preprocessing complete: ${summary.created}/${summary.detections} annotations`);
+      addToast(
+        `${projectName}: YOLO created ${summary.created}/${summary.detections} annotations`,
+        summary.created > 0 ? 'success' : 'info',
+        6000
+      );
+    } catch (err) {
+      console.error('YOLO preprocessing failed:', err);
+      setStatusMessage('YOLO preprocessing failed');
+      addToast('YOLO preprocessing failed', 'error', 8000);
     }
   };
 

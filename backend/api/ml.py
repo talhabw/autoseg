@@ -26,6 +26,7 @@ from ml.propagate import (
 )
 from core.masks import mask_to_rle, rle_to_mask, mask_iou
 from core.polygons import mask_to_yolo_polygon
+from core.store import ProjectStore
 from backend.api.projects import get_project, get_store
 from backend.yolo_autoannotate import (
     YoloAnnotateOptions,
@@ -338,9 +339,10 @@ async def segment(request: SegmentRequest):
 
 
 @router.post("/yolo/image", response_model=YoloRunResponse)
-async def yolo_annotate_image(request: YoloRunImageRequest):
+def yolo_annotate_image(request: YoloRunImageRequest):
     """Run YOLO-assisted annotation on one image."""
-    store = get_store()
+    current_store = get_store()
+    store = ProjectStore(current_store.db_path)
     try:
         options = _yolo_options_from_request(request)
         summary = run_yolo_on_image(store, request.image_id, options)
@@ -349,12 +351,15 @@ async def yolo_annotate_image(request: YoloRunImageRequest):
         logger.error("YOLO image annotation failed: %s", e)
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"YOLO annotation failed: {e}")
+    finally:
+        store.close()
 
 
 @router.post("/yolo/project", response_model=YoloRunResponse)
-async def yolo_annotate_project(request: YoloAnnotateRequest):
+def yolo_annotate_project(request: YoloAnnotateRequest):
     """Run YOLO-assisted annotation on all images in the current project."""
-    store = get_store()
+    current_store = get_store()
+    store = ProjectStore(current_store.db_path)
     project = get_project()
     try:
         options = _yolo_options_from_request(request)
@@ -364,6 +369,8 @@ async def yolo_annotate_project(request: YoloAnnotateRequest):
         logger.error("YOLO project annotation failed: %s", e)
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"YOLO annotation failed: {e}")
+    finally:
+        store.close()
 
 
 def _yolo_options_from_request(request: YoloAnnotateRequest) -> YoloAnnotateOptions:
