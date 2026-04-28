@@ -11,7 +11,7 @@ interface RunYoloOptions {
 }
 
 export async function runYoloOnCurrentImage(options: RunYoloOptions = {}): Promise<boolean> {
-  const currentImage = useProjectStore.getState().currentImage;
+  const currentImage = getCurrentImage();
   if (!currentImage) {
     useUIStore.getState().addToast('No image selected', 'warning');
     return false;
@@ -38,7 +38,7 @@ export async function runYoloForImage(
     await useAnnotationStore.getState().loadLabels();
     useAnnotationStore.getState().invalidateAnnotations(imageId);
 
-    const currentImage = useProjectStore.getState().currentImage;
+    const currentImage = getCurrentImage();
     if (currentImage?.id === imageId) {
       await useAnnotationStore.getState().loadAnnotations(imageId);
     }
@@ -63,7 +63,7 @@ export async function runYoloForImage(
 
 export async function startAutoYolo(): Promise<void> {
   const projectState = useProjectStore.getState();
-  if (!projectState.currentImage) {
+  if (!projectState.images[projectState.currentImageIndex]) {
     useUIStore.getState().addToast('No image selected', 'warning');
     return;
   }
@@ -138,6 +138,11 @@ function getYoloOptions(): api.YoloAnnotateOptions | null {
     duplicateThreshold: 0.85,
     replaceExistingYolo: true,
   };
+}
+
+function getCurrentImage() {
+  const { images, currentImageIndex } = useProjectStore.getState();
+  return images[currentImageIndex] ?? null;
 }
 
 function parseClassFilter(value: string): string[] | null {

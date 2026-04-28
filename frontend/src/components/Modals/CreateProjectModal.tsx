@@ -148,7 +148,8 @@ export function CreateProjectModal() {
       useAnnotationStore.getState().invalidateAnnotations();
       await useAnnotationStore.getState().loadLabels();
 
-      const currentImage = useProjectStore.getState().currentImage;
+      const { images, currentImageIndex } = useProjectStore.getState();
+      const currentImage = images[currentImageIndex] ?? null;
       if (currentImage) {
         await useAnnotationStore.getState().loadAnnotations(currentImage.id);
       }
