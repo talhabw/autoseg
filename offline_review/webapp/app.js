@@ -1,5 +1,6 @@
 (function () {
   const data = window.REVIEW_DATA;
+  const INITIAL_PRELOAD_COUNT = 100;
   if (!data || !Array.isArray(data.images)) {
     document.body.innerHTML = '<main style="padding:24px;color:#fff;background:#0b1020;font-family:system-ui">Missing review manifest.</main>';
     return;
@@ -224,22 +225,25 @@
     }
   }
 
-  function preloadAllImages() {
-    const total = data.images.length;
+  function preloadImages(items, onProgress) {
+    const total = items.length;
     let completed = 0;
-    elements.loadingProgress.textContent = `0 / ${total}`;
 
-    const tasks = data.images.map((item) => new Promise((resolve) => {
+    const tasks = items.map((item) => new Promise((resolve) => {
       const image = new Image();
       image.onload = () => {
         state.cache.set(item.id, image);
         completed += 1;
-        elements.loadingProgress.textContent = `${completed} / ${total}`;
+        if (onProgress) {
+          onProgress(completed, total);
+        }
         resolve();
       };
       image.onerror = () => {
         completed += 1;
-        elements.loadingProgress.textContent = `${completed} / ${total}`;
+        if (onProgress) {
+          onProgress(completed, total);
+        }
         resolve();
       };
       image.src = assetUrl(item.previewPath);
@@ -263,12 +267,33 @@
     bindEvents();
     renderMarkedList();
 
-    await preloadAllImages();
+    const initialItems = data.images.slice(0, INITIAL_PRELOAD_COUNT);
+    const remainingItems = data.images.slice(initialItems.length);
+
+    elements.loadingProgress.textContent = `0 / ${initialItems.length}`;
+    await preloadImages(initialItems, (completed, total) => {
+      elements.loadingProgress.textContent = `${completed} / ${total}`;
+    });
 
     state.ready = true;
     elements.loadingOverlay.classList.add('is-hidden');
-    elements.preloadStatus.textContent = `Loaded ${data.images.length} preview images`;
+    if (remainingItems.length === 0) {
+      elements.preloadStatus.textContent = `Loaded ${data.images.length} preview images`;
+    } else {
+      elements.preloadStatus.textContent = `Loaded ${initialItems.length}/${data.images.length}, preloading rest...`;
+    }
     render();
+
+    if (remainingItems.length > 0) {
+      void preloadImages(remainingItems, (completed, total) => {
+        const loadedCount = initialItems.length + completed;
+        if (completed === total) {
+          elements.preloadStatus.textContent = `Loaded ${data.images.length} preview images`;
+        } else {
+          elements.preloadStatus.textContent = `Loaded ${loadedCount}/${data.images.length}, preloading rest...`;
+        }
+      });
+    }
   }
 
   init();
