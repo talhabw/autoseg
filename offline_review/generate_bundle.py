@@ -213,6 +213,9 @@ def scan_dataset(input_dir: Path, output_dir: Path | None = None) -> list[Datase
     input_dir = input_dir.resolve()
     output_dir = output_dir.resolve() if output_dir is not None else None
     entries: list[DatasetEntry] = []
+    skip_generated_subtree = output_dir is not None and output_dir.is_relative_to(
+        input_dir
+    )
 
     for image_path in sorted(input_dir.rglob("*")):
         if (
@@ -220,7 +223,7 @@ def scan_dataset(input_dir: Path, output_dir: Path | None = None) -> list[Datase
             or image_path.suffix.lower() not in IMAGE_EXTENSIONS
         ):
             continue
-        if output_dir is not None and image_path.is_relative_to(output_dir):
+        if skip_generated_subtree and image_path.is_relative_to(output_dir):
             continue
 
         label_path = image_path.with_suffix(".txt")

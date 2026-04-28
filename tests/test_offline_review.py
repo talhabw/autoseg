@@ -48,3 +48,18 @@ def test_scan_dataset_recursively_only_returns_labeled_images(tmp_path: Path):
     assert len(entries) == 1
     assert entries[0].relative_image_path == "nested/frame_001.jpg"
     assert entries[0].relative_label_path == "nested/frame_001.txt"
+
+
+def test_scan_dataset_does_not_exclude_input_when_output_is_parent(tmp_path: Path):
+    root = tmp_path / "labels"
+    dataset_dir = root / "torpedo"
+    dataset_dir.mkdir(parents=True)
+
+    image_path = dataset_dir / "frame_001.jpg"
+    Image.new("RGB", (16, 16), color="white").save(image_path)
+    image_path.with_suffix(".txt").write_text("0 0.5 0.5 0.5 0.5\n")
+
+    entries = scan_dataset(dataset_dir, root)
+
+    assert len(entries) == 1
+    assert entries[0].relative_image_path == "frame_001.jpg"
