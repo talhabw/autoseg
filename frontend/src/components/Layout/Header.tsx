@@ -1,7 +1,10 @@
 
+import { useState } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useAnnotationStore } from '../../stores/annotationStore';
 import { stopAutoTracking } from '../../App';
+import * as api from '../../api/client';
 
 
 import type { InteractionMode } from '../../types';
@@ -20,6 +23,7 @@ import {
   FolderOpen,
   Download,
   FastForward,
+  Search,
 } from 'lucide-react';
 
 export function Header() {
@@ -41,15 +45,66 @@ export function Header() {
     setShowExportModal,
     setShowSettingsModal,
     setStatusMessage,
+    addToast,
     autoNext,
     setAutoNext,
+    yoloModelPath,
+    yoloConfidence,
+    yoloIou,
+    yoloClassFilter,
+    yoloUseSam,
+    yoloUseYoloMasks,
+    yoloMaxDetections,
+    yoloDevice,
   } = useUIStore();
 
-  const { project } = useProjectStore();
+  const { project, images, currentImageIndex } = useProjectStore();
+  const currentImage = images[currentImageIndex];
+  const [isRunningYolo, setIsRunningYolo] = useState(false);
 
   // Trigger segmentation via keyboard event simulation
   const triggerSegmentation = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true }));
+  };
+
+  const runYoloOnCurrentImage = async () => {
+    if (!currentImage) return;
+    if (!yoloModelPath.trim()) {
+      addToast('Set a YOLO model path in Settings first', 'warning');
+      return;
+    }
+
+    setIsRunningYolo(true);
+    setStatusMessage('Running YOLO on current image...');
+    try {
+      const summary = await api.runYoloOnImage(currentImage.id, {
+        modelPath: yoloModelPath.trim(),
+        confidence: yoloConfidence,
+        iou: yoloIou,
+        maxDetections: yoloMaxDetections,
+        device: yoloDevice,
+        classFilter: parseClassFilter(yoloClassFilter),
+        useSam: yoloUseSam,
+        useYoloMasks: yoloUseYoloMasks,
+        status: 'pending',
+        duplicateThreshold: 0.85,
+        replaceExistingYolo: true,
+      });
+
+      await useAnnotationStore.getState().loadLabels();
+      await useAnnotationStore.getState().loadAnnotations(currentImage.id);
+      setStatusMessage(`YOLO created ${summary.created}/${summary.detections} annotations`);
+      addToast(
+        `YOLO created ${summary.created}/${summary.detections}${summary.skipped_duplicates > 0 ? ` (${summary.skipped_duplicates} duplicates skipped)` : ''}`,
+        summary.created > 0 ? 'success' : 'info'
+      );
+    } catch (err) {
+      console.error('YOLO annotation failed:', err);
+      setStatusMessage('YOLO annotation failed');
+      addToast('YOLO annotation failed', 'error');
+    } finally {
+      setIsRunningYolo(false);
+    }
   };
 
   const tools: { mode: InteractionMode; label: string; shortcut: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -129,6 +184,24 @@ export function Header() {
           <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(S)</span>
         </Button>
 
+        {project && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-2 text-muted-foreground"
+            onClick={runYoloOnCurrentImage}
+            disabled={isRunningYolo || !currentImage}
+            title="Run YOLO detection on current image"
+          >
+            {isRunningYolo ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">YOLO</span>
+          </Button>
+        )}
+
         {/* Action: Track */}
         <Button
           variant={trackModeEnabled ? (isPropagating ? "default" : "secondary") : "outline"}
@@ -205,4 +278,12 @@ export function Header() {
       </div>
     </header>
   );
+}
+
+function parseClassFilter(value: string): string[] | null {
+  const items = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
 }

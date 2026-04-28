@@ -20,11 +20,74 @@ const api = axios.create({
 
 // ==================== Projects ====================
 
-export async function createProject(projectDir: string, imageDir: string, name: string): Promise<Project> {
+export interface YoloAnnotateOptions {
+  modelPath: string;
+  confidence: number;
+  iou: number;
+  imgsz?: number | null;
+  maxDetections: number;
+  device: string;
+  classFilter?: string[] | null;
+  useSam: boolean;
+  useYoloMasks: boolean;
+  status?: string;
+  duplicateThreshold?: number;
+  replaceExistingYolo?: boolean;
+}
+
+export interface YoloPreprocessOptions extends YoloAnnotateOptions {
+  enabled: boolean;
+}
+
+export interface YoloRunSummary {
+  images_processed: number;
+  detections: number;
+  created: number;
+  skipped_duplicates: number;
+  failed: number;
+  sam_failures: number;
+  labels_created: number;
+  per_image: Array<{
+    image_id: number;
+    order_index: number;
+    detections: number;
+    created: number;
+    skipped_duplicates: number;
+    failed: number;
+    sam_failures: number;
+  }>;
+}
+
+function yoloPayload(options: YoloAnnotateOptions) {
+  return {
+    model_path: options.modelPath,
+    confidence: options.confidence,
+    iou: options.iou,
+    imgsz: options.imgsz || undefined,
+    max_detections: options.maxDetections,
+    device: options.device,
+    class_filter: options.classFilter && options.classFilter.length > 0 ? options.classFilter : undefined,
+    use_sam: options.useSam,
+    use_yolo_masks: options.useYoloMasks,
+    status: options.status ?? 'pending',
+    duplicate_threshold: options.duplicateThreshold ?? 0.85,
+    replace_existing_yolo: options.replaceExistingYolo ?? false,
+  };
+}
+
+export async function createProject(
+  projectDir: string,
+  imageDir: string,
+  name: string,
+  yoloPreprocess?: YoloPreprocessOptions
+): Promise<Project> {
   const response = await api.post<Project>('/projects', {
     project_dir: projectDir,
     image_dir: imageDir,
     name,
+    yolo_preprocess: yoloPreprocess?.enabled
+      ? { enabled: true, ...yoloPayload(yoloPreprocess) }
+      : undefined,
   });
   return response.data;
 }
@@ -229,6 +292,22 @@ export async function findImagesMissingAnnotations(
 }
 
 // ==================== ML ====================
+
+export async function runYoloOnImage(
+  imageId: number,
+  options: YoloAnnotateOptions
+): Promise<YoloRunSummary> {
+  const response = await api.post<YoloRunSummary>('/ml/yolo/image', {
+    image_id: imageId,
+    ...yoloPayload(options),
+  });
+  return response.data;
+}
+
+export async function runYoloOnProject(options: YoloAnnotateOptions): Promise<YoloRunSummary> {
+  const response = await api.post<YoloRunSummary>('/ml/yolo/project', yoloPayload(options));
+  return response.data;
+}
 
 export async function loadSAM(device = 'cuda'): Promise<void> {
   await api.post('/ml/sam/load', { device });

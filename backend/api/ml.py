@@ -8,8 +8,8 @@ import traceback
 import numpy as np
 import torch
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Any, Optional
 from PIL import Image
 
 from ml.segment import get_segment_service, clear_segment_service
@@ -26,7 +26,12 @@ from ml.propagate import (
 )
 from core.masks import mask_to_rle, rle_to_mask, mask_iou
 from core.polygons import mask_to_yolo_polygon
-from backend.api.projects import get_store
+from backend.api.projects import get_project, get_store
+from backend.yolo_autoannotate import (
+    YoloAnnotateOptions,
+    run_yolo_on_image,
+    run_yolo_on_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,37 @@ class SegmentResponse(BaseModel):
     polygon: list[float]
     score: float
     bbox: list[float]  # refined bbox
+
+
+class YoloAnnotateRequest(BaseModel):
+    model_path: str
+    confidence: float = 0.25
+    iou: float = 0.7
+    imgsz: Optional[int] = None
+    max_detections: int = 300
+    device: str = "cuda"
+    class_filter: Optional[list[str]] = None
+    use_sam: bool = True
+    use_yolo_masks: bool = True
+    status: str = "pending"
+    duplicate_threshold: float = 0.85
+    replace_existing_yolo: bool = False
+
+
+class YoloRunImageRequest(YoloAnnotateRequest):
+    image_id: int
+    replace_existing_yolo: bool = True
+
+
+class YoloRunResponse(BaseModel):
+    images_processed: int
+    detections: int
+    created: int
+    skipped_duplicates: int
+    failed: int
+    sam_failures: int
+    labels_created: int
+    per_image: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PropagateRequest(BaseModel):
@@ -296,6 +332,59 @@ async def segment(request: SegmentRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Segmentation failed: {e}")
+
+
+# ==================== YOLO Auto-Annotation Endpoints ====================
+
+
+@router.post("/yolo/image", response_model=YoloRunResponse)
+async def yolo_annotate_image(request: YoloRunImageRequest):
+    """Run YOLO-assisted annotation on one image."""
+    store = get_store()
+    try:
+        options = _yolo_options_from_request(request)
+        summary = run_yolo_on_image(store, request.image_id, options)
+        return YoloRunResponse(**summary.to_dict())
+    except Exception as e:
+        logger.error("YOLO image annotation failed: %s", e)
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"YOLO annotation failed: {e}")
+
+
+@router.post("/yolo/project", response_model=YoloRunResponse)
+async def yolo_annotate_project(request: YoloAnnotateRequest):
+    """Run YOLO-assisted annotation on all images in the current project."""
+    store = get_store()
+    project = get_project()
+    try:
+        options = _yolo_options_from_request(request)
+        summary = run_yolo_on_project(store, project.id, options)
+        return YoloRunResponse(**summary.to_dict())
+    except Exception as e:
+        logger.error("YOLO project annotation failed: %s", e)
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"YOLO annotation failed: {e}")
+
+
+def _yolo_options_from_request(request: YoloAnnotateRequest) -> YoloAnnotateOptions:
+    model_path = request.model_path.strip()
+    if not model_path:
+        raise ValueError("YOLO model path is required")
+
+    return YoloAnnotateOptions(
+        model_path=model_path,
+        confidence=max(0.0, min(1.0, request.confidence)),
+        iou=max(0.0, min(1.0, request.iou)),
+        imgsz=request.imgsz,
+        max_detections=max(1, request.max_detections),
+        device=request.device,
+        class_filter=request.class_filter,
+        use_sam=request.use_sam,
+        use_yolo_masks=request.use_yolo_masks,
+        status=request.status,
+        duplicate_threshold=max(0.0, min(1.0, request.duplicate_threshold)),
+        replace_existing_yolo=request.replace_existing_yolo,
+    )
 
 
 # ==================== Embedding Endpoints ====================

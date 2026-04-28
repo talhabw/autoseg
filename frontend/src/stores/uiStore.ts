@@ -40,6 +40,16 @@ interface UIState {
   iouThreshold: number; // Minimum IoU with dense prediction to accept
   autoNext: boolean; // Auto-advance to next image after propagation
   propagationFailureMode: 'stop' | 'skip'; // 'stop' = stop on failure, 'skip' = skip failed image and continue
+
+  // YOLO assisted annotation settings
+  yoloModelPath: string;
+  yoloConfidence: number;
+  yoloIou: number;
+  yoloClassFilter: string;
+  yoloUseSam: boolean;
+  yoloUseYoloMasks: boolean;
+  yoloMaxDetections: number;
+  yoloDevice: string;
   
   // Performance mode settings
   performanceMode: boolean; // When true, skip UI updates during auto-propagation
@@ -99,6 +109,14 @@ interface UIState {
   setIouThreshold: (threshold: number) => void;
   setAutoNext: (enabled: boolean) => void;
   setPropagationFailureMode: (mode: 'stop' | 'skip') => void;
+  setYoloModelPath: (path: string) => void;
+  setYoloConfidence: (confidence: number) => void;
+  setYoloIou: (iou: number) => void;
+  setYoloClassFilter: (value: string) => void;
+  setYoloUseSam: (enabled: boolean) => void;
+  setYoloUseYoloMasks: (enabled: boolean) => void;
+  setYoloMaxDetections: (maxDetections: number) => void;
+  setYoloDevice: (device: string) => void;
   
   // SAM settings actions
   setSamMaskThreshold: (threshold: number) => Promise<void>;
@@ -138,6 +156,16 @@ export const useUIStore = create<UIState>()(
       iouThreshold: 0.3, // Default: 30% IoU threshold
       autoNext: false, // Default: manual navigation
       propagationFailureMode: 'stop', // Default: stop on failure (safer)
+
+      // YOLO assisted annotation settings
+      yoloModelPath: '',
+      yoloConfidence: 0.25,
+      yoloIou: 0.7,
+      yoloClassFilter: '',
+      yoloUseSam: true,
+      yoloUseYoloMasks: true,
+      yoloMaxDetections: 300,
+      yoloDevice: 'cuda',
       
       // Performance mode settings
       performanceMode: false, // Default: normal mode with UI updates
@@ -253,6 +281,14 @@ export const useUIStore = create<UIState>()(
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
       setAutoNext: (enabled) => set({ autoNext: enabled }),
       setPropagationFailureMode: (mode) => set({ propagationFailureMode: mode }),
+      setYoloModelPath: (path) => set({ yoloModelPath: path }),
+      setYoloConfidence: (confidence) => set({ yoloConfidence: Math.max(0, Math.min(1, confidence)) }),
+      setYoloIou: (iou) => set({ yoloIou: Math.max(0, Math.min(1, iou)) }),
+      setYoloClassFilter: (value) => set({ yoloClassFilter: value }),
+      setYoloUseSam: (enabled) => set({ yoloUseSam: enabled }),
+      setYoloUseYoloMasks: (enabled) => set({ yoloUseYoloMasks: enabled }),
+      setYoloMaxDetections: (maxDetections) => set({ yoloMaxDetections: Math.max(1, Math.min(1000, Math.round(maxDetections))) }),
+      setYoloDevice: (device) => set({ yoloDevice: device }),
 
       // SAM settings - sync with backend
       setSamMaskThreshold: async (threshold) => {
@@ -351,6 +387,14 @@ export const useUIStore = create<UIState>()(
         iouThreshold: state.iouThreshold,
         autoNext: state.autoNext,
         performanceMode: state.performanceMode,
+        yoloModelPath: state.yoloModelPath,
+        yoloConfidence: state.yoloConfidence,
+        yoloIou: state.yoloIou,
+        yoloClassFilter: state.yoloClassFilter,
+        yoloUseSam: state.yoloUseSam,
+        yoloUseYoloMasks: state.yoloUseYoloMasks,
+        yoloMaxDetections: state.yoloMaxDetections,
+        yoloDevice: state.yoloDevice,
       }),
     }
   )

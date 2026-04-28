@@ -16,7 +16,12 @@ interface ProjectState {
   imageCount: number;
 
   // Actions
-  createProject: (projectDir: string, imageDir: string, name: string) => Promise<void>;
+  createProject: (
+    projectDir: string,
+    imageDir: string,
+    name: string,
+    yoloPreprocess?: api.YoloPreprocessOptions
+  ) => Promise<Project>;
   openProject: (projectDir: string) => Promise<void>;
   closeProject: () => Promise<void>;
   loadImages: () => Promise<void>;
@@ -46,14 +51,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   // Actions
-  createProject: async (projectDir, imageDir, name) => {
+  createProject: async (projectDir, imageDir, name, yoloPreprocess) => {
     set({ isLoading: true, error: null });
     try {
-      const project = await api.createProject(projectDir, imageDir, name);
+      const project = await api.createProject(projectDir, imageDir, name, yoloPreprocess);
       set({ project, currentImageIndex: 0 });
       await get().loadImages();
       // Save last project path
       useUIStore.getState().setLastProjectPath(projectDir);
+      return project;
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to create project' });
       throw err;

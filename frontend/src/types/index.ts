@@ -5,6 +5,7 @@ export interface Project {
   name: string;
   root_dir: string;
   image_count: number;
+  yolo_summary?: object | null;
 }
 
 export interface ImageRecord {
@@ -30,7 +31,7 @@ export interface Annotation {
   bbox: [number, number, number, number] | null;  // [x1, y1, x2, y2]
   polygon: number[] | null;
   mask_rle: object | null;
-  source: 'manual' | 'propagated' | 'tracked';
+  source: 'manual' | 'propagated' | 'tracked' | 'yolo' | 'yolo_sam' | 'yolo_seg';
   confidence: number | null;
   status: 'approved' | 'pending' | 'rejected';
 }

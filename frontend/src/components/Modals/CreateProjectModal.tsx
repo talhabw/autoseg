@@ -12,17 +12,36 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { FolderBrowser } from "../FolderBrowser/FolderBrowser";
 import { FolderOpen, Wand2 } from "lucide-react";
 
 export function CreateProjectModal() {
-  const { showCreateProjectModal, setShowCreateProjectModal, setStatusMessage } = useUIStore();
+  const {
+    showCreateProjectModal,
+    setShowCreateProjectModal,
+    setStatusMessage,
+    yoloModelPath,
+    setYoloModelPath,
+    yoloConfidence,
+    setYoloConfidence,
+    yoloIou,
+    yoloClassFilter,
+    setYoloClassFilter,
+    yoloUseSam,
+    setYoloUseSam,
+    yoloUseYoloMasks,
+    yoloMaxDetections,
+    yoloDevice,
+  } = useUIStore();
   const { createProject } = useProjectStore();
 
   const [name, setName] = useState('');
   const [imageDir, setImageDir] = useState('');
   const [projectDir, setProjectDir] = useState('');
   const [projectDirManuallyEdited, setProjectDirManuallyEdited] = useState(false);
+  const [runYoloPreprocess, setRunYoloPreprocess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -63,6 +82,7 @@ export function CreateProjectModal() {
       setImageDir('');
       setProjectDir('');
       setProjectDirManuallyEdited(false);
+      setRunYoloPreprocess(false);
       setError('');
     }
   }, [showCreateProjectModal]);
@@ -79,10 +99,40 @@ export function CreateProjectModal() {
     // Auto-generate name if not provided
     const finalName = name.trim() || 'Untitled Project';
 
+    if (runYoloPreprocess && !yoloModelPath.trim()) {
+      setError('YOLO model path is required when preprocessing is enabled');
+      return;
+    }
+
     setIsLoading(true);
     try {
-      await createProject(projectDir, imageDir, finalName);
-      setStatusMessage(`Created project: ${finalName}`);
+      const project = await createProject(
+        projectDir,
+        imageDir,
+        finalName,
+        runYoloPreprocess
+          ? {
+              enabled: true,
+              modelPath: yoloModelPath.trim(),
+              confidence: yoloConfidence,
+              iou: yoloIou,
+              maxDetections: yoloMaxDetections,
+              device: yoloDevice,
+              classFilter: parseClassFilter(yoloClassFilter),
+              useSam: yoloUseSam,
+              useYoloMasks: yoloUseYoloMasks,
+              status: 'pending',
+              duplicateThreshold: 0.85,
+            }
+          : undefined
+      );
+
+      const summary = project.yolo_summary as { created?: number; detections?: number } | null | undefined;
+      setStatusMessage(
+        summary
+          ? `Created project: ${finalName} (${summary.created ?? 0}/${summary.detections ?? 0} YOLO annotations)`
+          : `Created project: ${finalName}`
+      );
       setShowCreateProjectModal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
@@ -93,7 +143,7 @@ export function CreateProjectModal() {
 
   return (
     <Dialog open={showCreateProjectModal} onOpenChange={setShowCreateProjectModal}>
-      <DialogContent className="sm:max-w-[550px]">
+      <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FolderOpen className="w-5 h-5" />
@@ -162,6 +212,79 @@ export function CreateProjectModal() {
             />
           </div>
 
+          <div className="space-y-4 rounded-lg border p-4 bg-muted/10">
+            <div className="flex items-center gap-3">
+              <Switch
+                id="run-yolo-preprocess"
+                checked={runYoloPreprocess}
+                onCheckedChange={setRunYoloPreprocess}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="run-yolo-preprocess">Run YOLO preprocessing</Label>
+                <p className="text-xs text-muted-foreground">
+                  Detect objects with a YOLO model and optionally refine boxes with SAM3 before you start reviewing.
+                </p>
+              </div>
+            </div>
+
+            {runYoloPreprocess && (
+              <div className="space-y-4 pt-2 border-t border-border/50">
+                <div className="space-y-2">
+                  <Label htmlFor="yoloModelPath">YOLO Model Path</Label>
+                  <Input
+                    id="yoloModelPath"
+                    placeholder="/path/to/yolo11.pt"
+                    value={yoloModelPath}
+                    onChange={(e) => setYoloModelPath(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label>Confidence</Label>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                      {(yoloConfidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={[yoloConfidence * 100]}
+                    onValueChange={(vals) => setYoloConfidence(vals[0] / 100)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="yoloClasses">Classes (optional)</Label>
+                  <Input
+                    id="yoloClasses"
+                    placeholder="torpedo_hole,0"
+                    value={yoloClassFilter}
+                    onChange={(e) => setYoloClassFilter(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated YOLO class names or ids. Empty means all classes.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="yoloUseSamCreate">Refine with SAM3</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Recommended for YOLO bbox models.
+                    </p>
+                  </div>
+                  <Switch
+                    id="yoloUseSamCreate"
+                    checked={yoloUseSam}
+                    onCheckedChange={setYoloUseSam}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-sm text-red-600 dark:text-red-400">
               {error}
@@ -187,4 +310,12 @@ export function CreateProjectModal() {
       </DialogContent>
     </Dialog>
   );
+}
+
+function parseClassFilter(value: string): string[] | null {
+  const items = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
 }

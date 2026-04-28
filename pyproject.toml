@@ -22,6 +22,9 @@ dependencies = [
     
     # Data utilities
     "pycocotools>=2.0.0",
+
+    # YOLO-assisted annotation
+    "ultralytics>=8.3.0",
     
     # SAM3 (local submodule)
     "sam3",

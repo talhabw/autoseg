@@ -63,6 +63,22 @@ export function SettingsModal() {
     samLoaded,
     performanceMode,
     setPerformanceMode,
+    yoloModelPath,
+    setYoloModelPath,
+    yoloConfidence,
+    setYoloConfidence,
+    yoloIou,
+    setYoloIou,
+    yoloClassFilter,
+    setYoloClassFilter,
+    yoloUseSam,
+    setYoloUseSam,
+    yoloUseYoloMasks,
+    setYoloUseYoloMasks,
+    yoloMaxDetections,
+    setYoloMaxDetections,
+    yoloDevice,
+    setYoloDevice,
     addToast,
   } = useUIStore();
 
@@ -269,6 +285,120 @@ export function SettingsModal() {
                 <p className="text-xs text-muted-foreground">
                   Larger models provide better segmentation accuracy but require more GPU memory and inference time.
                 </p>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-border/50">
+                <div className="space-y-2">
+                  <Label>YOLO Model Path</Label>
+                  <Input
+                    placeholder="/path/to/yolo11.pt"
+                    value={yoloModelPath}
+                    onChange={(e) => setYoloModelPath(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Used for create-time preprocessing and the YOLO button on the current image. Supports bbox and segmentation YOLO models.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label>YOLO Confidence</Label>
+                      <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                        {(yoloConfidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <Slider
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={[yoloConfidence * 100]}
+                      onValueChange={(vals) => setYoloConfidence(vals[0] / 100)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label>YOLO IoU</Label>
+                      <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                        {(yoloIou * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <Slider
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={[yoloIou * 100]}
+                      onValueChange={(vals) => setYoloIou(vals[0] / 100)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>YOLO Classes</Label>
+                    <Input
+                      placeholder="optional: hole,0,torpedo"
+                      value={yoloClassFilter}
+                      onChange={(e) => setYoloClassFilter(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Comma-separated class names or ids. Leave empty to use all detected classes.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Max Detections</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={yoloMaxDetections}
+                      onChange={(e) => setYoloMaxDetections(Number(e.target.value) || 1)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>YOLO Device</Label>
+                  <Select value={yoloDevice} onValueChange={setYoloDevice}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select device" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cuda">CUDA</SelectItem>
+                      <SelectItem value="cpu">CPU</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center space-x-4 rounded-lg border p-4">
+                  <Switch
+                    id="yolo-use-sam"
+                    checked={yoloUseSam}
+                    onCheckedChange={setYoloUseSam}
+                  />
+                  <div className="flex-1 space-y-1">
+                    <Label htmlFor="yolo-use-sam">Refine YOLO Boxes With SAM</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Recommended for bbox models. YOLO creates boxes, then SAM3 turns them into masks.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-4 rounded-lg border p-4">
+                  <Switch
+                    id="yolo-use-masks"
+                    checked={yoloUseYoloMasks}
+                    onCheckedChange={setYoloUseYoloMasks}
+                  />
+                  <div className="flex-1 space-y-1">
+                    <Label htmlFor="yolo-use-masks">Use YOLO Seg Masks When Available</Label>
+                    <p className="text-xs text-muted-foreground">
+                      For YOLO segmentation models, masks are used when SAM is off or if SAM refinement fails.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

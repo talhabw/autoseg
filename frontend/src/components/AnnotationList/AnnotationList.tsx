@@ -52,6 +52,10 @@ export function AnnotationList() {
       case 'propagated':
       case 'tracked':
         return '🔄';
+      case 'yolo':
+      case 'yolo_sam':
+      case 'yolo_seg':
+        return '🎯';
       default:
         return '';
     }
