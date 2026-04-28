@@ -15,6 +15,7 @@ import { useAnnotationStore } from './stores/annotationStore';
 import { useUIStore } from './stores/uiStore';
 import { useNotifications } from './hooks/useNotifications';
 import { preloadImage } from './utils/imageCache';
+import { runYoloOnCurrentImage, startAutoYolo, stopAutoYolo } from './utils/yoloRunner';
 import * as api from './api/client';
 
 const queryClient = new QueryClient();
@@ -1178,6 +1179,12 @@ function AppContent() {
         }
       }
 
+      // During auto YOLO, only allow Escape to stop after the current image finishes.
+      if (useUIStore.getState().autoYoloEnabled && e.key.toLowerCase() !== 'escape') {
+        e.preventDefault();
+        return;
+      }
+
       // Read fresh state from stores
       const { trackModeEnabled: trackEnabled, reviewModeEnabled: reviewEnabled, mode: currentMode, propagationLoaded: propLoaded, loadPropagation: loadProp, setMode: setModeAction, setTrackMode: setTrack, setReviewMode: setReview } = useUIStore.getState();
       const { selectedAnnotationId: selectedAnn, refinePoints: points, clearRefinePoints: clearPoints } = useAnnotationStore.getState();
@@ -1253,11 +1260,21 @@ function AppContent() {
         case 'q':
           setReview(!reviewEnabled);
           break;
-        case 'y':
         case '1':
-          // Approve (Y for Yes, 1 for quick access)
+          // Approve selected annotation while reviewing.
           if (reviewEnabled && selectedAnn) {
             handleApprove();
+          }
+          break;
+        case 'y':
+          if (e.shiftKey) {
+            if (useUIStore.getState().autoYoloEnabled) {
+              stopAutoYolo();
+            } else {
+              startAutoYolo();
+            }
+          } else {
+            runYoloOnCurrentImage();
           }
           break;
         case 'n':
@@ -1286,8 +1303,10 @@ function AppContent() {
           }
           break;
         case 'escape':
-          // Stop auto-tracking if in progress, otherwise clear points
-          if (useUIStore.getState().autoNext) {
+          // Stop auto workflows if in progress, otherwise clear points
+          if (useUIStore.getState().autoYoloEnabled) {
+            stopAutoYolo();
+          } else if (useUIStore.getState().autoNext) {
             stopAutoTracking();
             useUIStore.getState().setAutoNext(false);
             useUIStore.getState().addToast('Auto-tracking cancelled', 'info', 1500);

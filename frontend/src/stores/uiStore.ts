@@ -69,6 +69,8 @@ interface UIState {
   propagationLoaded: boolean;
   isLoadingModel: boolean;
   isPropagating: boolean;  // Track if propagation is in progress
+  isRunningYolo: boolean;
+  autoYoloEnabled: boolean;
   performanceProgress: PerformanceProgress | null; // Progress tracking for batch propagation
   
   // Modal states
@@ -128,6 +130,8 @@ interface UIState {
   // Status
   setStatusMessage: (message: string) => void;
   setIsPropagating: (value: boolean) => void;
+  setIsRunningYolo: (value: boolean) => void;
+  setAutoYoloEnabled: (enabled: boolean) => void;
   
   // Performance mode actions
   setPerformanceMode: (enabled: boolean) => void;
@@ -185,6 +189,8 @@ export const useUIStore = create<UIState>()(
       propagationLoaded: false,
       isLoadingModel: false,
       isPropagating: false,
+      isRunningYolo: false,
+      autoYoloEnabled: false,
       performanceProgress: null,
       showCreateProjectModal: false,
       showOpenProjectModal: false,
@@ -345,6 +351,8 @@ export const useUIStore = create<UIState>()(
 
       setStatusMessage: (message) => set({ statusMessage: message }),
       setIsPropagating: (value) => set({ isPropagating: value }),
+      setIsRunningYolo: (value) => set({ isRunningYolo: value }),
+      setAutoYoloEnabled: (enabled) => set({ autoYoloEnabled: enabled }),
       
       // Performance mode actions
       setPerformanceMode: (enabled) => set({ performanceMode: enabled }),

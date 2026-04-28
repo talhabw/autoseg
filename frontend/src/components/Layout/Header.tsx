@@ -1,10 +1,7 @@
-
-import { useState } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
-import { useAnnotationStore } from '../../stores/annotationStore';
 import { stopAutoTracking } from '../../App';
-import * as api from '../../api/client';
+import { runYoloOnCurrentImage, startAutoYolo, stopAutoYolo } from '../../utils/yoloRunner';
 
 
 import type { InteractionMode } from '../../types';
@@ -38,6 +35,8 @@ export function Header() {
     propagationLoaded,
     isLoadingModel,
     isPropagating,
+    isRunningYolo,
+    autoYoloEnabled,
     loadSAM,
     loadPropagation,
     setShowCreateProjectModal,
@@ -45,67 +44,16 @@ export function Header() {
     setShowExportModal,
     setShowSettingsModal,
     setStatusMessage,
-    addToast,
     autoNext,
     setAutoNext,
-    yoloModelPath,
-    yoloConfidence,
-    yoloIou,
-    yoloClassFilter,
-    yoloUseSam,
-    yoloUseYoloMasks,
-    yoloMaxDetections,
-    yoloDevice,
   } = useUIStore();
 
   const { project, images, currentImageIndex } = useProjectStore();
   const currentImage = images[currentImageIndex];
-  const [isRunningYolo, setIsRunningYolo] = useState(false);
 
   // Trigger segmentation via keyboard event simulation
   const triggerSegmentation = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true }));
-  };
-
-  const runYoloOnCurrentImage = async () => {
-    if (!currentImage) return;
-    if (!yoloModelPath.trim()) {
-      addToast('Set a YOLO model path in Settings first', 'warning');
-      return;
-    }
-
-    setIsRunningYolo(true);
-    setStatusMessage('Running YOLO on current image...');
-    try {
-      const summary = await api.runYoloOnImage(currentImage.id, {
-        modelPath: yoloModelPath.trim(),
-        confidence: yoloConfidence,
-        iou: yoloIou,
-        maxDetections: yoloMaxDetections,
-        device: yoloDevice,
-        classFilter: parseClassFilter(yoloClassFilter),
-        useSam: yoloUseSam,
-        useYoloMasks: yoloUseYoloMasks,
-        status: 'pending',
-        duplicateThreshold: 0.85,
-        replaceExistingYolo: true,
-      });
-
-      await useAnnotationStore.getState().loadLabels();
-      useAnnotationStore.getState().invalidateAnnotations(currentImage.id);
-      await useAnnotationStore.getState().loadAnnotations(currentImage.id);
-      setStatusMessage(`YOLO created ${summary.created}/${summary.detections} annotations`);
-      addToast(
-        `YOLO created ${summary.created}/${summary.detections}${summary.skipped_duplicates > 0 ? ` (${summary.skipped_duplicates} duplicates skipped)` : ''}`,
-        summary.created > 0 ? 'success' : 'info'
-      );
-    } catch (err) {
-      console.error('YOLO annotation failed:', err);
-      setStatusMessage('YOLO annotation failed');
-      addToast('YOLO annotation failed', 'error');
-    } finally {
-      setIsRunningYolo(false);
-    }
   };
 
   const tools: { mode: InteractionMode; label: string; shortcut: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -190,9 +138,9 @@ export function Header() {
             variant="outline"
             size="sm"
             className="h-8 gap-2 text-muted-foreground"
-            onClick={runYoloOnCurrentImage}
-            disabled={isRunningYolo || !currentImage}
-            title="Run YOLO detection on current image"
+            onClick={() => runYoloOnCurrentImage()}
+            disabled={isRunningYolo || !currentImage || autoYoloEnabled}
+            title="Run YOLO detection on current image (Y)"
           >
             {isRunningYolo ? (
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
@@ -200,6 +148,34 @@ export function Header() {
               <Search className="h-4 w-4" />
             )}
             <span className="hidden sm:inline">YOLO</span>
+            <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(Y)</span>
+          </Button>
+        )}
+
+        {project && (
+          <Button
+            variant={autoYoloEnabled ? "secondary" : "ghost"}
+            size="sm"
+            className={`h-8 gap-2 transition-all ${autoYoloEnabled
+              ? 'bg-purple-500/20 text-purple-500 border-purple-500/50 hover:bg-purple-500/30 animate-pulse'
+              : 'text-muted-foreground'}`}
+            onClick={() => {
+              if (autoYoloEnabled) {
+                stopAutoYolo();
+              } else {
+                startAutoYolo();
+              }
+            }}
+            disabled={!currentImage || (isRunningYolo && !autoYoloEnabled)}
+            title={autoYoloEnabled ? "Stop Auto YOLO (Esc)" : "Run YOLO across images (Shift+Y)"}
+          >
+            {autoYoloEnabled ? (
+              <Square className="h-4 w-4" />
+            ) : (
+              <FastForward className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">{autoYoloEnabled ? 'Stop' : 'Auto YOLO'}</span>
+            <span className="text-[10px] font-mono opacity-60 hidden sm:inline">(⇧Y)</span>
           </Button>
         )}
 
@@ -279,12 +255,4 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function parseClassFilter(value: string): string[] | null {
-  const items = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return items.length > 0 ? items : null;
 }
