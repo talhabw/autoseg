@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Project, ImageRecord } from '../types';
 import * as api from '../api/client';
 import { useUIStore } from './uiStore';
+import { useAnnotationStore } from './annotationStore';
 
 interface ProjectState {
   // State
@@ -55,6 +56,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const project = await api.createProject(projectDir, imageDir, name, yoloPreprocess);
+      useAnnotationStore.getState().invalidateAnnotations();
       set({ project, currentImageIndex: 0 });
       await get().loadImages();
       // Save last project path
@@ -72,6 +74,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const project = await api.openProject(projectDir);
+      useAnnotationStore.getState().invalidateAnnotations();
       
       // Try to restore last image index
       let lastIndex = 0;
@@ -107,6 +110,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await api.closeProject();
     } finally {
+      useAnnotationStore.getState().invalidateAnnotations();
       set({ project: null, images: [], currentImageIndex: 0, error: null });
     }
   },
@@ -164,6 +168,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     try {
       const result = await api.resyncImages();
+      useAnnotationStore.getState().invalidateAnnotations();
 
       // Reload images to get updated list
       await get().loadImages();

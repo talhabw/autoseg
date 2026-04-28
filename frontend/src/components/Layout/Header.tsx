@@ -92,6 +92,7 @@ export function Header() {
       });
 
       await useAnnotationStore.getState().loadLabels();
+      useAnnotationStore.getState().invalidateAnnotations(currentImage.id);
       await useAnnotationStore.getState().loadAnnotations(currentImage.id);
       setStatusMessage(`YOLO created ${summary.created}/${summary.detections} annotations`);
       addToast(

@@ -145,6 +145,7 @@ export function CreateProjectModal() {
 
     try {
       const summary = await api.runYoloOnProject(options);
+      useAnnotationStore.getState().invalidateAnnotations();
       await useAnnotationStore.getState().loadLabels();
 
       const currentImage = useProjectStore.getState().currentImage;

@@ -6,6 +6,7 @@ import { useAnnotationStore } from '../../stores/annotationStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getOptimizedImageUrl } from '../../api/client';
 import { maskToCanvas, type RLEMask } from '../../utils/rle';
+import { getCachedImage, preloadImage } from '../../utils/imageCache';
 import type { Annotation, DrawingBbox } from '../../types';
 
 const IMAGE_LOAD_DEBOUNCE_MS = 120;
@@ -108,7 +109,14 @@ export function ImageCanvas() {
     }
 
     let cancelled = false;
-    let img: HTMLImageElement | null = null;
+    const imageSrc = getOptimizedImageUrl(currentImage.id, 2048, 85, project?.id);
+    const cachedImage = getCachedImage(imageSrc);
+    if (cachedImage) {
+      setImage(cachedImage);
+      fitToView(cachedImage);
+      setIsImageLoading(false);
+      return;
+    }
 
     const timeoutId = window.setTimeout(() => {
       if (cancelled) return;
@@ -116,37 +124,24 @@ export function ImageCanvas() {
       // Set loading state only when we are actually about to fetch the image.
       setIsImageLoading(true);
 
-      img = new window.Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        if (!cancelled && img) {
-          setImage(img);
-          fitToView(img);
+      preloadImage(imageSrc).then((loadedImage) => {
+        if (!cancelled) {
+          setImage(loadedImage);
+          fitToView(loadedImage);
           setIsImageLoading(false);
         }
-      };
-
-      img.onerror = () => {
+      }).catch(() => {
         console.error('Failed to load image:', currentImage.id);
         if (!cancelled) {
           setImage(null);
           setIsImageLoading(false);
         }
-      };
-
-      // Use optimized image endpoint for faster loading.
-      img.src = getOptimizedImageUrl(currentImage.id, 2048, 85, project?.id);
+      });
     }, IMAGE_LOAD_DEBOUNCE_MS);
 
-    // Cleanup: abort image loading on unmount/change
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
-      if (img) {
-        img.onload = null;
-        img.onerror = null;
-        img.src = ''; // Abort loading
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on currentImage?.id not the full object to avoid unnecessary reloads
   }, [currentImage?.id, project?.id, isPerformanceLoopActive, fitToView]);

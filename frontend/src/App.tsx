@@ -14,9 +14,11 @@ import { useProjectStore } from './stores/projectStore';
 import { useAnnotationStore } from './stores/annotationStore';
 import { useUIStore } from './stores/uiStore';
 import { useNotifications } from './hooks/useNotifications';
+import { preloadImage } from './utils/imageCache';
 import * as api from './api/client';
 
 const queryClient = new QueryClient();
+const PREFETCH_LOOKAHEAD_IMAGES = 10;
 
 // Helper to compute bounding box IoU for client-side duplicate detection
 function bboxIoU(box1: number[], box2: number[]): number {
@@ -280,6 +282,7 @@ async function runPerformancePropagation() {
         console.error(`[PERF] Failed to create annotation:`, err);
       }
     }
+    useAnnotationStore.getState().invalidateAnnotations(targetImageId);
 
     // Update progress
     const progress = useUIStore.getState().performanceProgress;
@@ -460,6 +463,26 @@ function AppContent() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentImage?.id]); // Only re-run on image change; callbacks read fresh store state
+
+  // Warm browser/API caches for the next few frames so navigation feels instant.
+  useEffect(() => {
+    if (!project || images.length === 0) return;
+
+    const upcomingImages = images.slice(
+      currentImageIndex + 1,
+      currentImageIndex + 1 + PREFETCH_LOOKAHEAD_IMAGES
+    );
+    if (upcomingImages.length === 0) return;
+
+    useAnnotationStore.getState().prefetchAnnotations(upcomingImages.map((img) => img.id));
+
+    for (const img of upcomingImages) {
+      const src = api.getOptimizedImageUrl(img.id, 2048, 85, project.id);
+      void preloadImage(src).catch(() => {
+        // Prefetch is best-effort; the active image loader will surface real errors.
+      });
+    }
+  }, [project, images, currentImageIndex]);
 
   // Persist last visited image index after navigation settles.
   useEffect(() => {
@@ -931,6 +954,7 @@ function AppContent() {
                 console.error(`${logPrefix} Failed to create annotation:`, err);
               }
             }
+            useAnnotationStore.getState().invalidateAnnotations(targetImageId);
           }
 
           // Navigate to the failed image so user can manually annotate
@@ -988,6 +1012,7 @@ function AppContent() {
           console.error(`${logPrefix} Failed to create tracked annotation:`, err);
         }
       }
+      useAnnotationStore.getState().invalidateAnnotations(targetImageId);
 
       // Final check before navigation  
       if (currentRequestId !== _propagationRequestId) {
