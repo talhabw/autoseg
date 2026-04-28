@@ -7,6 +7,7 @@
   }
 
   const elements = {
+    appShell: document.getElementById('app-shell'),
     datasetName: document.getElementById('dataset-name'),
     preloadStatus: document.getElementById('preload-status'),
     loadingOverlay: document.getElementById('loading-overlay'),
@@ -21,6 +22,7 @@
     prevButton: document.getElementById('prev-button'),
     nextButton: document.getElementById('next-button'),
     markButton: document.getElementById('mark-button'),
+    focusButton: document.getElementById('focus-button'),
     copyButton: document.getElementById('copy-button'),
     clearButton: document.getElementById('clear-button'),
   };
@@ -29,6 +31,7 @@
     currentIndex: 0,
     cache: new Map(),
     markedIds: new Set(),
+    imageFocusMode: false,
     ready: false,
   };
 
@@ -138,6 +141,20 @@
     renderMarkedList();
   }
 
+  function updateFocusButton() {
+    elements.focusButton.textContent = state.imageFocusMode ? 'Exit focus' : 'Focus image';
+  }
+
+  function setImageFocusMode(enabled) {
+    state.imageFocusMode = enabled;
+    elements.appShell.classList.toggle('image-focus-mode', enabled);
+    updateFocusButton();
+  }
+
+  function toggleImageFocusMode() {
+    setImageFocusMode(!state.imageFocusMode);
+  }
+
   function move(delta) {
     if (!state.ready || data.images.length === 0) {
       return;
@@ -220,6 +237,12 @@
         event.preventDefault();
         toggleCurrentMarked();
         break;
+      case 'Escape':
+        if (state.imageFocusMode) {
+          event.preventDefault();
+          setImageFocusMode(false);
+        }
+        break;
       default:
         break;
     }
@@ -256,6 +279,7 @@
     elements.prevButton.addEventListener('click', () => move(-1));
     elements.nextButton.addEventListener('click', () => move(1));
     elements.markButton.addEventListener('click', toggleCurrentMarked);
+    elements.focusButton.addEventListener('click', toggleImageFocusMode);
     elements.copyButton.addEventListener('click', copyMarkedPaths);
     elements.clearButton.addEventListener('click', clearMarkedPaths);
     window.addEventListener('keydown', handleKeydown);
@@ -265,6 +289,7 @@
     elements.datasetName.textContent = data.datasetName;
     state.markedIds = loadStoredMarkedIds();
     bindEvents();
+    updateFocusButton();
     renderMarkedList();
 
     const initialItems = data.images.slice(0, INITIAL_PRELOAD_COUNT);
