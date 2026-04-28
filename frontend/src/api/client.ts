@@ -516,6 +516,7 @@ export async function exportYolo(data: {
   include_negative?: boolean;
   labels_only?: boolean;
   labels_colocate?: boolean;
+  image_intervals?: string;
 }): Promise<{
   train_images: number;
   val_images: number;
@@ -538,6 +539,7 @@ export async function exportBbox(data: {
   include_negative?: boolean;
   labels_only?: boolean;
   labels_colocate?: boolean;
+  image_intervals?: string;
 }): Promise<{
   format: string;
   train_images: number;

@@ -23,6 +23,7 @@ class ExportRequest(BaseModel):
     include_negative: bool = False  # Include unlabeled images as negative examples
     labels_only: bool = False  # Export only label files (no image copying)
     labels_colocate: bool = True  # Place label files next to original images
+    image_intervals: Optional[str] = None  # 1-based image numbers, e.g. "1-13,27-31"
 
 
 class ExportResponse(BaseModel):
@@ -47,6 +48,7 @@ async def export_yolo(request: ExportRequest):
 
     # Run export
     try:
+        image_order_indices = _parse_image_intervals(request.image_intervals)
         report = export_yolo_seg(
             project_dir=project.root_dir,
             out_dir=request.output_dir,
@@ -56,6 +58,7 @@ async def export_yolo(request: ExportRequest):
             include_negative=request.include_negative,
             labels_only=request.labels_only,
             labels_colocate=request.labels_colocate,
+            image_order_indices=image_order_indices,
         )
 
         # Verify export (labels-only export intentionally skips data.yaml/images)
@@ -72,6 +75,8 @@ async def export_yolo(request: ExportRequest):
             is_valid=is_valid,
             validation_errors=errors[:10] if errors else [],  # Limit error count
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {e}")
 
@@ -138,6 +143,7 @@ class BboxExportRequest(BaseModel):
     include_negative: bool = False  # Include unlabeled images as negative examples
     labels_only: bool = False  # Export only label/annotation files (no image copying)
     labels_colocate: bool = True  # YOLO-detect only: place labels next to images
+    image_intervals: Optional[str] = None  # 1-based image numbers, e.g. "1-13,27-31"
 
 
 class BboxExportResponse(BaseModel):
@@ -160,6 +166,7 @@ async def export_bbox(request: BboxExportRequest):
 
     try:
         split = {"train": request.train_split, "val": 1.0 - request.train_split}
+        image_order_indices = _parse_image_intervals(request.image_intervals)
 
         if request.format == "coco":
             report = export_coco(
@@ -171,6 +178,7 @@ async def export_bbox(request: BboxExportRequest):
                 include_segmentation=request.include_segmentation,
                 include_negative=request.include_negative,
                 labels_only=request.labels_only,
+                image_order_indices=image_order_indices,
             )
         else:  # yolo-detect
             report = export_yolo_detect(
@@ -182,6 +190,7 @@ async def export_bbox(request: BboxExportRequest):
                 include_negative=request.include_negative,
                 labels_only=request.labels_only,
                 labels_colocate=request.labels_colocate,
+                image_order_indices=image_order_indices,
             )
 
         return BboxExportResponse(
@@ -191,5 +200,58 @@ async def export_bbox(request: BboxExportRequest):
             total_annotations=report.total_annotations,
             warnings=report.warnings,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+
+def _parse_image_intervals(value: Optional[str]) -> Optional[set[int]]:
+    """Parse 1-based comma-separated image intervals into zero-based order indices."""
+    if value is None or not value.strip():
+        return None
+
+    indices: set[int] = set()
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            start_raw, end_raw = [token.strip() for token in part.split("-", 1)]
+            if not start_raw or not end_raw:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid image interval: {part}",
+                )
+            try:
+                start = int(start_raw)
+                end = int(end_raw)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid image interval: {part}",
+                )
+            if start < 1 or end < 1 or start > end:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid image interval: {part}",
+                )
+            indices.update(range(start - 1, end))
+            continue
+
+        try:
+            image_number = int(part)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image number: {part}",
+            )
+        if image_number < 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image number: {part}",
+            )
+        indices.add(image_number - 1)
+
+    return indices if indices else None

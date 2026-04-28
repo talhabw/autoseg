@@ -45,6 +45,7 @@ def export_yolo_seg(
     include_negative: bool = False,
     labels_only: bool = False,
     labels_colocate: bool = True,
+    image_order_indices: Optional[set[int]] = None,
 ) -> ExportReport:
     """
     Export project to YOLO segmentation format.
@@ -80,6 +81,7 @@ def export_yolo_seg(
             include_negative,
             labels_only,
             labels_colocate,
+            image_order_indices,
         )
     finally:
         store.close()
@@ -95,6 +97,7 @@ def _do_export(
     include_negative: bool,
     labels_only: bool = False,
     labels_colocate: bool = True,
+    image_order_indices: Optional[set[int]] = None,
 ) -> ExportReport:
     """Perform the actual export."""
 
@@ -123,9 +126,11 @@ def _do_export(
 
     # Get all images
     images = store.list_images(project.id)
+    if image_order_indices is not None:
+        images = [image for image in images if image.order_index in image_order_indices]
 
     if not images:
-        warnings.append("No images in project")
+        warnings.append("No images matched export selection")
         return ExportReport(
             total_images=0,
             train_images=0,

@@ -1,7 +1,9 @@
+import { useEffect, useState, type FormEvent } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { LabelPicker } from '../LabelPicker/LabelPicker';
 import { AnnotationList } from '../AnnotationList/AnnotationList';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -11,10 +13,26 @@ export function Sidebar() {
     currentImageIndex,
     nextImage,
     prevImage,
+    setCurrentImageIndex,
     project,
   } = useProjectStore();
 
   const currentImage = images[currentImageIndex];
+  const [jumpValue, setJumpValue] = useState(String(currentImageIndex + 1));
+
+  useEffect(() => {
+    setJumpValue(String(currentImageIndex + 1));
+  }, [currentImageIndex]);
+
+  const handleJump = (event: FormEvent) => {
+    event.preventDefault();
+    const imageNumber = Number(jumpValue);
+    if (!Number.isInteger(imageNumber) || imageNumber < 1 || imageNumber > images.length) {
+      setJumpValue(String(currentImageIndex + 1));
+      return;
+    }
+    setCurrentImageIndex(imageNumber - 1);
+  };
 
   if (!project) {
     return (
@@ -65,6 +83,22 @@ export function Sidebar() {
             {currentImage.path.split('/').pop()}
           </p>
         )}
+
+        <form onSubmit={handleJump} className="flex items-center gap-2 mt-3">
+          <span className="text-xs text-muted-foreground">Jump</span>
+          <Input
+            type="number"
+            min={1}
+            max={images.length}
+            value={jumpValue}
+            onChange={(event) => setJumpValue(event.target.value)}
+            className="h-8 text-sm"
+            aria-label="Jump to image number"
+          />
+          <Button type="submit" variant="secondary" size="sm" className="h-8">
+            Go
+          </Button>
+        </form>
       </div>
 
       {/* Label picker */}

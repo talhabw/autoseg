@@ -43,6 +43,7 @@ def export_yolo_detect(
     include_negative: bool = False,
     labels_only: bool = False,
     labels_colocate: bool = True,
+    image_order_indices: Optional[set[int]] = None,
 ) -> BboxExportReport:
     """
     Export project to YOLO detection format (bbox only).
@@ -77,6 +78,7 @@ def export_yolo_detect(
             include_negative,
             labels_only,
             labels_colocate,
+            image_order_indices,
         )
     finally:
         store.close()
@@ -92,6 +94,7 @@ def _do_yolo_detect_export(
     include_negative: bool,
     labels_only: bool = False,
     labels_colocate: bool = False,
+    image_order_indices: Optional[set[int]] = None,
 ) -> BboxExportReport:
     """Perform YOLO-detect export."""
 
@@ -116,9 +119,11 @@ def _do_yolo_detect_export(
         warnings.append("No labels defined in project")
 
     images = store.list_images(project.id)
+    if image_order_indices is not None:
+        images = [image for image in images if image.order_index in image_order_indices]
 
     if not images:
-        warnings.append("No images in project")
+        warnings.append("No images matched export selection")
         return BboxExportReport(
             format="yolo-detect",
             total_images=0,
@@ -291,6 +296,7 @@ def export_coco(
     include_segmentation: bool = False,
     include_negative: bool = False,
     labels_only: bool = False,
+    image_order_indices: Optional[set[int]] = None,
 ) -> BboxExportReport:
     """
     Export project to COCO JSON format.
@@ -331,6 +337,7 @@ def export_coco(
             include_segmentation,
             include_negative,
             labels_only,
+            image_order_indices,
         )
     finally:
         store.close()
@@ -346,6 +353,7 @@ def _do_coco_export(
     include_segmentation: bool,
     include_negative: bool,
     labels_only: bool,
+    image_order_indices: Optional[set[int]] = None,
 ) -> BboxExportReport:
     """Perform COCO format export."""
 
@@ -363,9 +371,11 @@ def _do_coco_export(
         warnings.append("No labels defined in project")
 
     images = store.list_images(project.id)
+    if image_order_indices is not None:
+        images = [image for image in images if image.order_index in image_order_indices]
 
     if not images:
-        warnings.append("No images in project")
+        warnings.append("No images matched export selection")
         return BboxExportReport(
             format="coco",
             total_images=0,

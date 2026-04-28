@@ -34,6 +34,7 @@ export function ExportModal() {
   const [includeNegative, setIncludeNegative] = useState(false);
   const [labelsOnly, setLabelsOnly] = useState(false);
   const [labelsColocate, setLabelsColocate] = useState(true);
+  const [imageIntervals, setImageIntervals] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState('');
@@ -64,6 +65,12 @@ export function ExportModal() {
       return;
     }
 
+    const intervals = imageIntervals.trim();
+    if (intervals && !isValidImageIntervals(intervals)) {
+      setError('Image intervals must look like 1-13,27-31 or 5,8,10-12');
+      return;
+    }
+
     setIsLoading(true);
     try {
       let res;
@@ -76,6 +83,7 @@ export function ExportModal() {
           include_negative: includeNegative,
           labels_only: labelsOnly,
           labels_colocate: labelsColocate,
+          image_intervals: intervals || undefined,
         });
       } else {
         const bboxRes = await exportBbox({
@@ -88,6 +96,7 @@ export function ExportModal() {
           include_negative: includeNegative,
           labels_only: labelsOnly,
           labels_colocate: labelsColocate,
+          image_intervals: intervals || undefined,
         });
         res = { ...bboxRes, is_valid: true };
       }
@@ -205,6 +214,19 @@ export function ExportModal() {
                   onChange={(e) => setSeed(e.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="imageIntervals">Image Intervals (optional)</Label>
+              <Input
+                id="imageIntervals"
+                placeholder="1-13,27-31"
+                value={imageIntervals}
+                onChange={(e) => setImageIntervals(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Use 1-based image numbers shown in the sidebar. Empty exports all images. Existing options still apply, including skipping empty images unless negatives are included.
+              </p>
             </div>
 
             <div className="flex items-center space-x-2">
@@ -353,4 +375,21 @@ export function ExportModal() {
       </DialogContent>
     </Dialog>
   );
+}
+
+function isValidImageIntervals(value: string): boolean {
+  return value.split(',').every((rawPart) => {
+    const part = rawPart.trim();
+    if (!part) return false;
+
+    if (part.includes('-')) {
+      const [startRaw, endRaw] = part.split('-', 2).map((token) => token.trim());
+      const start = Number(startRaw);
+      const end = Number(endRaw);
+      return Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start;
+    }
+
+    const imageNumber = Number(part);
+    return Number.isInteger(imageNumber) && imageNumber >= 1;
+  });
 }
