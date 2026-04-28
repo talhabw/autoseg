@@ -159,6 +159,121 @@ def _load_image(image_id: int) -> tuple[np.ndarray, int, int]:
         raise HTTPException(status_code=500, detail=f"Failed to load image: {e}")
 
 
+def _find_duplicate_annotation(
+    store,
+    existing_annotations,
+    new_bbox: list[float],
+    new_mask: Optional[np.ndarray],
+    source_label_id: int,
+    threshold: float,
+) -> tuple[bool, float, str | None]:
+    """Find an existing annotation that is effectively the same target object.
+
+    Tracking can make multiple same-class source objects collapse onto the same
+    target object. Mask IoU alone misses bbox-only annotations. Different-label
+    conflicts stay stricter to avoid suppressing nearby legitimate classes.
+    """
+    if threshold <= 0:
+        return False, 0.0, None
+
+    same_label_threshold = threshold
+    different_label_threshold = max(threshold, 0.9)
+
+    for existing_ann in existing_annotations:
+        score = _annotation_overlap_score(existing_ann, new_bbox, new_mask)
+        if score <= 0:
+            continue
+
+        is_same_label = existing_ann.label_id == source_label_id
+        required_score = same_label_threshold if is_same_label else different_label_threshold
+        if score < required_score:
+            continue
+
+        if is_same_label:
+            logger.info(
+                "Skipping duplicate same-label annotation (overlap=%.3f with ann %s)",
+                score,
+                existing_ann.id,
+            )
+            return True, score, None
+
+        existing_label = store.get_label_by_id(existing_ann.label_id)
+        conflicting_label_name = (
+            existing_label.name if existing_label else f"label_{existing_ann.label_id}"
+        )
+        logger.info(
+            "Skipping - location already labeled as '%s' (overlap=%.3f with ann %s)",
+            conflicting_label_name,
+            score,
+            existing_ann.id,
+        )
+        return True, score, conflicting_label_name
+
+    return False, 0.0, None
+
+
+def _annotation_overlap_score(
+    annotation,
+    new_bbox: list[float],
+    new_mask: Optional[np.ndarray],
+) -> float:
+    """Return the best available overlap score for duplicate detection."""
+    scores: list[float] = []
+
+    if new_mask is not None and annotation.mask_rle:
+        try:
+            existing_mask = rle_to_mask(annotation.mask_rle)
+            if existing_mask.shape == new_mask.shape:
+                scores.append(mask_iou(new_mask, existing_mask))
+        except Exception as e:
+            logger.warning("Failed to compare masks for duplicate detection: %s", e)
+
+    if annotation.bbox_xyxy:
+        scores.append(_bbox_duplicate_score(new_bbox, annotation.bbox_xyxy))
+
+    return max(scores) if scores else 0.0
+
+
+def _bbox_duplicate_score(bbox1: list[float], bbox2: list[float]) -> float:
+    """Score bbox overlap for duplicate detection.
+
+    IoU catches similarly sized boxes. Intersection over the smaller box catches
+    cases where SAM/YOLO makes one box slightly tighter than the other while the
+    centers still refer to the same object.
+    """
+    x1 = max(bbox1[0], bbox2[0])
+    y1 = max(bbox1[1], bbox2[1])
+    x2 = min(bbox1[2], bbox2[2])
+    y2 = min(bbox1[3], bbox2[3])
+
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+
+    intersection = (x2 - x1) * (y2 - y1)
+    w1 = max(0.0, bbox1[2] - bbox1[0])
+    h1 = max(0.0, bbox1[3] - bbox1[1])
+    w2 = max(0.0, bbox2[2] - bbox2[0])
+    h2 = max(0.0, bbox2[3] - bbox2[1])
+    area1 = w1 * h1
+    area2 = w2 * h2
+    union = area1 + area2 - intersection
+    iou = intersection / union if union > 0 else 0.0
+
+    smaller_area = min(area1, area2)
+    containment = intersection / smaller_area if smaller_area > 0 else 0.0
+    cx1 = (bbox1[0] + bbox1[2]) / 2
+    cy1 = (bbox1[1] + bbox1[3]) / 2
+    cx2 = (bbox2[0] + bbox2[2]) / 2
+    cy2 = (bbox2[1] + bbox2[3]) / 2
+    center_distance = float(np.hypot(cx1 - cx2, cy1 - cy2))
+    smaller_diag = float(np.hypot(min(w1, w2), min(h1, h2)))
+
+    if smaller_diag > 0 and center_distance <= smaller_diag * 0.5:
+        return max(float(iou), float(containment))
+
+    return float(iou)
+
+
 # ==================== SAM Endpoints ====================
 
 
@@ -592,40 +707,16 @@ async def propagate(request: PropagateRequest):
         if request.skip_duplicate_threshold > 0:
             # Get existing annotations on target image
             target_annotations = store.list_annotations(request.target_image_id)
-            source_label_id = ann.label_id
-
-            for existing_ann in target_annotations:
-                if existing_ann.mask_rle:
-                    try:
-                        existing_mask = rle_to_mask(existing_ann.mask_rle)
-                        iou = mask_iou(new_mask, existing_mask)
-
-                        if iou >= request.skip_duplicate_threshold:
-                            duplicate_skipped = True
-                            duplicate_iou = iou
-
-                            # Check if it's the same label or different
-                            if existing_ann.label_id != source_label_id:
-                                # Different class at same location - get label name
-                                existing_label = store.get_label_by_id(
-                                    existing_ann.label_id
-                                )
-                                conflicting_label_name = (
-                                    existing_label.name
-                                    if existing_label
-                                    else f"label_{existing_ann.label_id}"
-                                )
-                                logger.info(
-                                    f"Skipping - location already labeled as '{conflicting_label_name}' (IoU={iou:.3f} with ann {existing_ann.id})"
-                                )
-                            else:
-                                logger.info(
-                                    f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
-                                )
-                            break
-                    except Exception as e:
-                        logger.warning(f"Failed to compare masks: {e}")
-                        continue
+            duplicate_skipped, duplicate_iou, conflicting_label_name = (
+                _find_duplicate_annotation(
+                    store=store,
+                    existing_annotations=target_annotations,
+                    new_bbox=new_bbox,
+                    new_mask=new_mask,
+                    source_label_id=ann.label_id,
+                    threshold=request.skip_duplicate_threshold,
+                )
+            )
 
         # Convert to RLE and polygon
         rle = mask_to_rle(new_mask)
@@ -856,40 +947,16 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
 
         if request.skip_duplicate_threshold > 0:
             target_annotations = store.list_annotations(request.target_image_id)
-            source_label_id = ann.label_id
-
-            for existing_ann in target_annotations:
-                if existing_ann.mask_rle:
-                    try:
-                        existing_mask = rle_to_mask(existing_ann.mask_rle)
-                        iou = mask_iou(result.mask, existing_mask)
-
-                        if iou >= request.skip_duplicate_threshold:
-                            duplicate_skipped = True
-                            duplicate_iou = iou
-
-                            # Check if it's the same label or different
-                            if existing_ann.label_id != source_label_id:
-                                # Different class at same location - get label name
-                                existing_label = store.get_label_by_id(
-                                    existing_ann.label_id
-                                )
-                                conflicting_label_name = (
-                                    existing_label.name
-                                    if existing_label
-                                    else f"label_{existing_ann.label_id}"
-                                )
-                                logger.info(
-                                    f"Skipping - location already labeled as '{conflicting_label_name}' (IoU={iou:.3f} with ann {existing_ann.id})"
-                                )
-                            else:
-                                logger.info(
-                                    f"Skipping duplicate annotation (IoU={iou:.3f} with ann {existing_ann.id})"
-                                )
-                            break
-                    except Exception as e:
-                        logger.warning(f"Failed to compare masks: {e}")
-                        continue
+            duplicate_skipped, duplicate_iou, conflicting_label_name = (
+                _find_duplicate_annotation(
+                    store=store,
+                    existing_annotations=target_annotations,
+                    new_bbox=result.bbox,
+                    new_mask=result.mask,
+                    source_label_id=ann.label_id,
+                    threshold=request.skip_duplicate_threshold,
+                )
+            )
 
         return PropagateAdvancedResponse(
             bbox=result.bbox,

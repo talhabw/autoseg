@@ -52,6 +52,8 @@ export function SettingsModal() {
     setIouVerify,
     iouThreshold,
     setIouThreshold,
+    trackingDuplicateThreshold,
+    setTrackingDuplicateThreshold,
     propagationFailureMode,
     setPropagationFailureMode,
     samMaskThreshold,
@@ -539,6 +541,25 @@ export function SettingsModal() {
                   </p>
                 </div>
               )}
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>Duplicate Threshold</Label>
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                    {(trackingDuplicateThreshold * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <Slider
+                  min={30}
+                  max={100}
+                  step={5}
+                  value={[trackingDuplicateThreshold * 100]}
+                  onValueChange={(vals) => setTrackingDuplicateThreshold(vals[0] / 100)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Skip a tracked result when it overlaps an existing same-label annotation by this much. Lower values remove more duplicates; higher values are more permissive.
+                </p>
+              </div>
 
               <div className="space-y-2">
                 <Label>On Propagation Failure</Label>

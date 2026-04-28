@@ -38,6 +38,7 @@ interface UIState {
   propagationMode: PropagationMode; // 'peak', 'dense', or 'auto'
   iouVerify: boolean; // Whether to verify results against dense prediction
   iouThreshold: number; // Minimum IoU with dense prediction to accept
+  trackingDuplicateThreshold: number; // Same-label overlap threshold for duplicate suppression
   autoNext: boolean; // Auto-advance to next image after propagation
   propagationFailureMode: 'stop' | 'skip'; // 'stop' = stop on failure, 'skip' = skip failed image and continue
 
@@ -109,6 +110,7 @@ interface UIState {
   setPropagationMode: (mode: PropagationMode) => void;
   setIouVerify: (verify: boolean) => void;
   setIouThreshold: (threshold: number) => void;
+  setTrackingDuplicateThreshold: (threshold: number) => void;
   setAutoNext: (enabled: boolean) => void;
   setPropagationFailureMode: (mode: 'stop' | 'skip') => void;
   setYoloModelPath: (path: string) => void;
@@ -158,6 +160,7 @@ export const useUIStore = create<UIState>()(
       propagationMode: 'auto', // Default: auto mode tries peak then dense
       iouVerify: true, // Default: verify results
       iouThreshold: 0.3, // Default: 30% IoU threshold
+      trackingDuplicateThreshold: 0.75, // Default: skip same-label results that mostly overlap
       autoNext: false, // Default: manual navigation
       propagationFailureMode: 'stop', // Default: stop on failure (safer)
 
@@ -285,6 +288,7 @@ export const useUIStore = create<UIState>()(
       setPropagationMode: (mode) => set({ propagationMode: mode }),
       setIouVerify: (verify) => set({ iouVerify: verify }),
       setIouThreshold: (threshold) => set({ iouThreshold: Math.max(0, Math.min(1, threshold)) }),
+      setTrackingDuplicateThreshold: (threshold) => set({ trackingDuplicateThreshold: Math.max(0, Math.min(1, threshold)) }),
       setAutoNext: (enabled) => set({ autoNext: enabled }),
       setPropagationFailureMode: (mode) => set({ propagationFailureMode: mode }),
       setYoloModelPath: (path) => set({ yoloModelPath: path }),
@@ -393,6 +397,7 @@ export const useUIStore = create<UIState>()(
         propagationMode: state.propagationMode,
         iouVerify: state.iouVerify,
         iouThreshold: state.iouThreshold,
+        trackingDuplicateThreshold: state.trackingDuplicateThreshold,
         autoNext: state.autoNext,
         performanceMode: state.performanceMode,
         yoloModelPath: state.yoloModelPath,
