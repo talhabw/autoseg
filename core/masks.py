@@ -261,7 +261,7 @@ def prune_thin_artifacts(
     if kernel_size <= 1:
         return binary_mask
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     opened_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
 
     if int(opened_mask.sum()) == 0:
