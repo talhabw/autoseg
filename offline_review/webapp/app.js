@@ -13,6 +13,7 @@
     loadingOverlay: document.getElementById('loading-overlay'),
     loadingProgress: document.getElementById('loading-progress'),
     activeImage: document.getElementById('active-image'),
+    focusExitButton: document.getElementById('focus-exit-button'),
     imagePath: document.getElementById('image-path'),
     labelSummary: document.getElementById('label-summary'),
     positionSummary: document.getElementById('position-summary'),
@@ -280,6 +281,7 @@
     elements.nextButton.addEventListener('click', () => move(1));
     elements.markButton.addEventListener('click', toggleCurrentMarked);
     elements.focusButton.addEventListener('click', toggleImageFocusMode);
+    elements.focusExitButton.addEventListener('click', () => setImageFocusMode(false));
     elements.copyButton.addEventListener('click', copyMarkedPaths);
     elements.clearButton.addEventListener('click', clearMarkedPaths);
     window.addEventListener('keydown', handleKeydown);
