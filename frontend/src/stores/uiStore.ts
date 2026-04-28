@@ -32,6 +32,7 @@ interface UIState {
   sizeMaxRatio: number; // Max allowed size ratio (e.g. 1.2)
   stopOnSizeMismatch: boolean;  // If true, stop propagation when size differs; if false, use fallback
   topK: number; // Number of peak candidates to try during propagation
+  useBBoxHint: boolean; // Whether tracking should constrain SAM with a bbox hint
   bboxHintScale: number; // Scale factor applied to SAM bbox hints during tracking
   pruneThinArtifacts: boolean; // Remove thin tracking branches before saving/showing masks
   propagationMode: PropagationMode; // 'peak', 'dense', or 'auto'
@@ -90,6 +91,7 @@ interface UIState {
   setSizeMaxRatio: (ratio: number) => void;
   setStopOnSizeMismatch: (stop: boolean) => void;
   setTopK: (k: number) => void;
+  setUseBBoxHint: (enabled: boolean) => void;
   setBboxHintScale: (scale: number) => void;
   setPruneThinArtifacts: (enabled: boolean) => void;
   setPropagationMode: (mode: PropagationMode) => void;
@@ -128,6 +130,7 @@ export const useUIStore = create<UIState>()(
       sizeMaxRatio: 2.0, // Max allowed size ratio (2.0x)
       stopOnSizeMismatch: true,  // Default: stop on size mismatch (safer)
       topK: 5, // Try 5 peak candidates by default
+      useBBoxHint: true, // Default: use bbox hints to keep tracking localized
       bboxHintScale: 1.15, // Slightly padded hint to keep SAM localized during tracking
       pruneThinArtifacts: true, // Default: clean thin tracking whiskers before returning results
       propagationMode: 'auto', // Default: auto mode tries peak then dense
@@ -242,6 +245,7 @@ export const useUIStore = create<UIState>()(
       setSizeMaxRatio: (ratio) => set({ sizeMaxRatio: Math.max(0.1, Math.min(5.0, ratio)) }),
       setStopOnSizeMismatch: (stop) => set({ stopOnSizeMismatch: stop }),
       setTopK: (k) => set({ topK: Math.max(1, Math.min(10, k)) }),
+      setUseBBoxHint: (enabled) => set({ useBBoxHint: enabled }),
       setBboxHintScale: (scale) => set({ bboxHintScale: Math.max(0.5, Math.min(3.0, scale)) }),
       setPruneThinArtifacts: (enabled) => set({ pruneThinArtifacts: enabled }),
       setPropagationMode: (mode) => set({ propagationMode: mode }),
@@ -339,6 +343,7 @@ export const useUIStore = create<UIState>()(
         sizeMaxRatio: state.sizeMaxRatio,
         stopOnSizeMismatch: state.stopOnSizeMismatch,
         topK: state.topK,
+        useBBoxHint: state.useBBoxHint,
         bboxHintScale: state.bboxHintScale,
         pruneThinArtifacts: state.pruneThinArtifacts,
         propagationMode: state.propagationMode,

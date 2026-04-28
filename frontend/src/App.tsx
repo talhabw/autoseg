@@ -153,7 +153,7 @@ async function runPerformancePropagation() {
     const failedLabels = new Set<number>();
     let duplicateSkipCount = 0;
 
-    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+    const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, useBBoxHint, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
     for (const ann of sourceAnnotations) {
       if (!ann.bbox) continue;
@@ -168,7 +168,7 @@ async function runPerformancePropagation() {
             sourceImageId, targetImageId, ann.id,
             {
               mode: propagationMode, iouVerify, iouThreshold,
-              useCachedMasks: true, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
+              useCachedMasks: true, useBBoxHint, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
               stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
             }
           );
@@ -176,7 +176,7 @@ async function runPerformancePropagation() {
           result = await api.propagate(
             sourceImageId, targetImageId, ann.id,
             sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch,
-            0.9, topK, bboxHintScale, pruneThinArtifacts
+            0.9, topK, useBBoxHint, bboxHintScale, pruneThinArtifacts
           );
         }
 
@@ -233,7 +233,7 @@ async function runPerformancePropagation() {
               fallbackResult.annotation.image_id, targetImageId, fallbackResult.annotation.id,
               {
                 mode: propagationMode, iouVerify, iouThreshold,
-                useCachedMasks: true, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
+                useCachedMasks: true, useBBoxHint, bboxHintScale, pruneThinArtifacts, sizeMinRatio, sizeMaxRatio,
                 stopOnSizeMismatch, topK, skipDuplicateThreshold: 0.9,
               }
             );
@@ -681,7 +681,7 @@ function AppContent() {
           console.log(`${logPrefix} Propagating annotation ${i + 1}/${sourceAnnotations.length} (id=${ann.id})`);
 
           // Get propagation settings from store
-          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+          const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, useBBoxHint, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
           
           // Use advanced propagation API when mode is not 'peak' or IoU verification is enabled
           const useAdvancedApi = propagationMode !== 'peak' || iouVerify;
@@ -697,6 +697,7 @@ function AppContent() {
                 iouVerify,
                 iouThreshold,
                 useCachedMasks: true,
+                useBBoxHint,
                 bboxHintScale,
                 pruneThinArtifacts,
                 sizeMinRatio,
@@ -716,6 +717,7 @@ function AppContent() {
               stopOnSizeMismatch,
               0.9,  // skipDuplicateThreshold - skip if 90%+ overlap with existing
               topK,
+              useBBoxHint,
               bboxHintScale,
               pruneThinArtifacts
             );
@@ -807,7 +809,7 @@ function AppContent() {
               console.log(`${logPrefix} Found fallback for label ${labelId} at image index ${fallbackResult.image_index} (attempt ${attempt + 1})`);
 
               // Get settings again
-              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
+              const { sizeMinRatio, sizeMaxRatio, stopOnSizeMismatch, topK, useBBoxHint, bboxHintScale, pruneThinArtifacts, propagationMode, iouVerify, iouThreshold } = useUIStore.getState();
 
               // Propagate from the fallback reference
               const result = await api.propagateAdvanced(
@@ -819,6 +821,7 @@ function AppContent() {
                   iouVerify,
                   iouThreshold,
                   useCachedMasks: true,
+                  useBBoxHint,
                   bboxHintScale,
                   pruneThinArtifacts,
                   sizeMinRatio,

@@ -309,6 +309,7 @@ export async function propagate(
   stopOnSizeMismatch: boolean = true,
   skipDuplicateThreshold: number = 0.9,
   topK: number = 5,
+  useBBoxHint: boolean = true,
   bboxHintScale: number = 1.15,
   pruneThinArtifacts: boolean = true
 ): Promise<PropagateResult> {
@@ -316,6 +317,7 @@ export async function propagate(
     source_image_id: sourceImageId,
     target_image_id: targetImageId,
     source_annotation_id: sourceAnnotationId,
+    use_bbox_hint: useBBoxHint,
     bbox_hint_scale: bboxHintScale,
     prune_thin_artifacts: pruneThinArtifacts,
     size_min_ratio: sizeMinRatio,
@@ -373,6 +375,7 @@ export async function propagateAdvanced(
     iouVerify?: boolean;
     iouThreshold?: number;
     useCachedMasks?: boolean;
+    useBBoxHint?: boolean;
     bboxHintScale?: number;
     pruneThinArtifacts?: boolean;
     sizeMinRatio?: number;
@@ -390,6 +393,7 @@ export async function propagateAdvanced(
     iou_verify: options.iouVerify ?? true,
     iou_threshold: options.iouThreshold ?? 0.3,
     use_cached_masks: options.useCachedMasks ?? true,
+    use_bbox_hint: options.useBBoxHint ?? true,
     bbox_hint_scale: options.bboxHintScale ?? 1.15,
     prune_thin_artifacts: options.pruneThinArtifacts ?? true,
     size_min_ratio: options.sizeMinRatio ?? 0.8,

@@ -502,6 +502,7 @@ class PropagateService:
         iou_verify: bool = True,
         iou_threshold: float = 0.3,
         use_cached_masks: bool = False,
+        use_bbox_hint: bool = True,
         bbox_hint_scale: float = 1.15,
         prune_thin_artifacts: bool = True,
         **kwargs,
@@ -589,6 +590,7 @@ class PropagateService:
                     source_image_id=source_image_id,
                     target_image_id=target_image_id,
                     annotation_id=annotation_id,
+                    use_bbox_hint=use_bbox_hint,
                     bbox_hint_scale=bbox_hint_scale,
                     **kwargs,
                 )
@@ -648,15 +650,17 @@ class PropagateService:
                 self.segment_service.set_image(target_image, target_image_id)
 
                 try:
-                    dense_bbox = mask_to_bbox(dense_mask)
-                    bbox_hint = _translate_bbox_hint(
-                        dense_bbox,
-                        center_x,
-                        center_y,
-                        img_w,
-                        img_h,
-                        scale=bbox_hint_scale,
-                    )
+                    bbox_hint = None
+                    if use_bbox_hint:
+                        dense_bbox = mask_to_bbox(dense_mask)
+                        bbox_hint = _translate_bbox_hint(
+                            dense_bbox,
+                            center_x,
+                            center_y,
+                            img_w,
+                            img_h,
+                            scale=bbox_hint_scale,
+                        )
                     mask, sam_score, bbox = self.segment_service.segment_with_point(
                         center_x, center_y, bbox_hint=bbox_hint
                     )
@@ -741,6 +745,7 @@ class PropagateService:
         source_image_id: Optional[str] = None,
         target_image_id: Optional[str] = None,
         annotation_id: Optional[int] = None,
+        use_bbox_hint: bool = True,
         bbox_hint_scale: float = 1.15,
         prune_thin_artifacts: bool = True,
         top_k: int = 5,
@@ -875,14 +880,16 @@ class PropagateService:
             )
 
             try:
-                bbox_hint = _translate_bbox_hint(
-                    source_bbox,
-                    point_x,
-                    point_y,
-                    img_w,
-                    img_h,
-                    scale=bbox_hint_scale,
-                )
+                bbox_hint = None
+                if use_bbox_hint:
+                    bbox_hint = _translate_bbox_hint(
+                        source_bbox,
+                        point_x,
+                        point_y,
+                        img_w,
+                        img_h,
+                        scale=bbox_hint_scale,
+                    )
 
                 # Use point to prompt SAM
                 mask, sam_score, refined_bbox = self.segment_service.segment_with_point(

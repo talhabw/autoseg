@@ -40,6 +40,8 @@ export function SettingsModal() {
     setStopOnSizeMismatch,
     topK,
     setTopK,
+    useBBoxHint,
+    setUseBBoxHint,
     bboxHintScale,
     setBboxHintScale,
     pruneThinArtifacts,
@@ -446,11 +448,25 @@ export function SettingsModal() {
                 </p>
               </div>
 
+              <div className="flex items-center space-x-4 rounded-lg border p-4">
+                <Switch
+                  id="use-bbox-hint"
+                  checked={useBBoxHint}
+                  onCheckedChange={setUseBBoxHint}
+                />
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="use-bbox-hint">Use BBox Hints For Tracking</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Constrains tracked SAM prompts with a translated bbox hint. Turn this off to use free point-only prompting instead.
+                  </p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>BBox Hint Scale</Label>
                   <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
-                    {bboxHintScale.toFixed(2)}x
+                    {useBBoxHint ? `${bboxHintScale.toFixed(2)}x` : 'Off'}
                   </span>
                 </div>
                 <Slider
@@ -458,10 +474,11 @@ export function SettingsModal() {
                   max={300}
                   step={5}
                   value={[bboxHintScale * 100]}
+                  disabled={!useBBoxHint}
                   onValueChange={(vals) => setBboxHintScale(vals[0] / 100)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Controls how much the SAM tracking hint box is padded. Lower = tighter and more restrictive. Higher = looser and more rotation-tolerant.
+                  Controls how much the SAM tracking hint box is padded when bbox hints are enabled. Lower = tighter and more restrictive. Higher = looser and more rotation-tolerant.
                 </p>
               </div>
 

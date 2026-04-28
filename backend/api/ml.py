@@ -77,6 +77,7 @@ class PropagateRequest(BaseModel):
     source_image_id: int
     target_image_id: int
     source_annotation_id: int
+    use_bbox_hint: bool = True
     bbox_hint_scale: float = 1.15  # Scale applied to the tracking bbox hint
     prune_thin_artifacts: bool = True
     size_min_ratio: float = 0.8  # Min allowed size ratio (e.g., 0.8x)
@@ -470,6 +471,7 @@ async def propagate(request: PropagateRequest):
             source_image_id=str(request.source_image_id),
             target_image_id=str(request.target_image_id),
             annotation_id=request.source_annotation_id,
+            use_bbox_hint=request.use_bbox_hint,
             bbox_hint_scale=max(0.5, min(3.0, request.bbox_hint_scale)),
             prune_thin_artifacts=request.prune_thin_artifacts,
             top_k=request.top_k,
@@ -582,6 +584,7 @@ class PropagateAdvancedRequest(BaseModel):
     iou_verify: bool = True
     iou_threshold: float = 0.3
     use_cached_masks: bool = True
+    use_bbox_hint: bool = True
     bbox_hint_scale: float = 1.15
     prune_thin_artifacts: bool = True
     size_min_ratio: float = 0.8
@@ -737,6 +740,7 @@ async def propagate_advanced(request: PropagateAdvancedRequest):
             iou_verify=request.iou_verify,
             iou_threshold=request.iou_threshold,
             use_cached_masks=request.use_cached_masks,
+            use_bbox_hint=request.use_bbox_hint,
             bbox_hint_scale=max(0.5, min(3.0, request.bbox_hint_scale)),
             prune_thin_artifacts=request.prune_thin_artifacts,
             size_min_ratio=request.size_min_ratio,
