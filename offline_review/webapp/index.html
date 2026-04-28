@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Offline Review</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Offline Review</p>
+          <h1 id="dataset-name">Loading...</h1>
+        </div>
+        <div class="topbar-meta">
+          <span id="preload-status" class="chip">Preparing previews</span>
+          <span class="chip">A/D or Arrow Keys</span>
+          <span class="chip">Q to mark</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="viewer-panel">
+          <div id="loading-overlay" class="loading-overlay">
+            <div class="loading-card">
+              <p class="loading-title">Loading preview images</p>
+              <p id="loading-progress" class="loading-progress">0 / 0</p>
+            </div>
+          </div>
+
+          <div class="viewer-toolbar">
+            <button id="prev-button" class="primary-button" type="button">Previous</button>
+            <button id="mark-button" class="secondary-button" type="button">Mark for removal</button>
+            <button id="next-button" class="primary-button" type="button">Next</button>
+          </div>
+
+          <div class="image-frame">
+            <img id="active-image" alt="Annotated review frame" />
+          </div>
+
+          <div class="image-details">
+            <div>
+              <p class="detail-label">Image</p>
+              <p id="image-path" class="detail-value">-</p>
+            </div>
+            <div>
+              <p class="detail-label">Labels</p>
+              <p id="label-summary" class="detail-value">-</p>
+            </div>
+            <div>
+              <p class="detail-label">Position</p>
+              <p id="position-summary" class="detail-value">-</p>
+            </div>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <div>
+              <p class="eyebrow">Removal List</p>
+              <h2 id="marked-count">0 marked</h2>
+            </div>
+            <div class="sidebar-actions">
+              <button id="copy-button" class="secondary-button" type="button">Copy marked paths</button>
+              <button id="clear-button" class="danger-button" type="button">Clear list</button>
+            </div>
+          </div>
+
+          <p class="sidebar-help">
+            Click an item to jump to it. The list is stored in local storage and stale entries are dropped automatically when the bundle changes.
+          </p>
+
+          <ul id="marked-list" class="marked-list"></ul>
+          <div id="empty-state" class="empty-state">No images marked for removal.</div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="manifest.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
