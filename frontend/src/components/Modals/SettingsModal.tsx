@@ -1,11 +1,13 @@
 import { useUIStore, type EmbedModel } from '../../stores/uiStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useAnnotationStore } from '../../stores/annotationStore';
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import type { PropagationMode } from '../../types';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -22,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { ListOrdered, RefreshCw, Trash2 } from 'lucide-react';
 
 export function SettingsModal() {
   const {
@@ -85,11 +87,13 @@ export function SettingsModal() {
   } = useUIStore();
 
   const { resyncImages, project, images } = useProjectStore();
+  const { labels, loadLabels } = useAnnotationStore();
 
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string; available: boolean }[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [bulkDeleteAfter, setBulkDeleteAfter] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showLabelMap, setShowLabelMap] = useState(false);
 
   useEffect(() => {
     if (showSettingsModal) {
@@ -98,6 +102,12 @@ export function SettingsModal() {
       }).catch(console.error);
     }
   }, [showSettingsModal]);
+
+  useEffect(() => {
+    if (showSettingsModal && project) {
+      void loadLabels();
+    }
+  }, [showSettingsModal, project, loadLabels]);
 
   const handleRefreshImages = async () => {
     setIsRefreshing(true);
@@ -152,6 +162,7 @@ export function SettingsModal() {
   // if (!showSettingsModal) return null; // Logic handled by Dialog open prop
 
   return (
+    <>
     <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
       <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -184,6 +195,24 @@ export function SettingsModal() {
                   >
                     <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
                     {isRefreshing ? 'Scanning...' : 'Refresh'}
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                  <div className="space-y-1">
+                    <Label>Export Label IDs</Label>
+                    <p className="text-xs text-muted-foreground">
+                      View the class IDs that YOLO/COCO exports will write for this project.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowLabelMap(true)}
+                    disabled={labels.length === 0}
+                  >
+                    <ListOrdered className="h-4 w-4 mr-2" />
+                    View IDs
                   </Button>
                 </div>
 
@@ -736,5 +765,52 @@ export function SettingsModal() {
         </div>
       </DialogContent>
     </Dialog>
+    <Dialog open={showLabelMap} onOpenChange={setShowLabelMap}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>Export Label IDs</DialogTitle>
+          <DialogDescription>
+            Export IDs are assigned from the project label list sorted by name, matching the current export code.
+          </DialogDescription>
+        </DialogHeader>
+
+        {labels.length > 0 ? (
+          <div className="max-h-[60vh] overflow-y-auto rounded-md border">
+            <div className="grid grid-cols-[80px_80px_90px_1fr] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+              <span>YOLO ID</span>
+              <span>COCO ID</span>
+              <span>Label ID</span>
+              <span>Name</span>
+            </div>
+            {labels.map((label, index) => (
+              <div
+                key={label.id}
+                className="grid grid-cols-[80px_80px_90px_1fr] items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+              >
+                <span className="font-mono text-muted-foreground">{index}</span>
+                <span className="font-mono text-muted-foreground">{index + 1}</span>
+                <span className="font-mono text-muted-foreground">{label.id}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border"
+                    style={{ backgroundColor: label.color }}
+                  />
+                  <span className="truncate">{label.name}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border p-4 text-sm text-muted-foreground">
+            No labels have been created for this project yet.
+          </p>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          YOLO segmentation/detection label files use the zero-based YOLO ID. COCO export category IDs use the one-based COCO ID.
+        </p>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
